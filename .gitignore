@@ -1,0 +1,39 @@
+# 敏感数据与本地配置
+.env
+.env.*
+!.env.example
+api/config.azure.json
+api/google.json
+
+# 测试数据与产出
+data/
+**/test*.xlsx
+**/test_data/
+reports/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE / 编辑器
+.cursor/
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 系统与缓存
+.DS_Store
+Thumbs.db
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/

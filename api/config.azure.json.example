@@ -1,0 +1,23 @@
+{
+  "LOG": true,
+  "HOST": "127.0.0.1",
+  "PORT": 3456,
+  "API_TIMEOUT_MS": 600000,
+  "Providers": [
+    {
+      "name": "azure",
+      "api_base_url": "https://YOUR-AZURE-REGION.openai.azure.com/openai/v1",
+      "api_key": "YOUR_AZURE_OPENAI_API_KEY",
+      "models": ["gpt-4o"],
+      "transformer": { "use": ["openai-responses"] }
+    },
+    {
+      "name": "vertex-gemini",
+      "api_base_url": "https://us-central1-aiplatform.googleapis.com",
+      "api_key": "YOUR_GOOGLE_CLOUD_OR_OAUTH_TOKEN",
+      "models": ["gemini-2.0-flash"],
+      "transformer": { "use": ["vertex-gemini"] }
+    }
+  ],
+  "Router": { "default": "azure,gpt-4o" }
+}

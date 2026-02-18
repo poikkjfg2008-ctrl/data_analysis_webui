@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pandas
+openpyxl
+python-docx
+matplotlib
+python-dateutil
+requests
