@@ -6,3 +6,5 @@ python-docx
 matplotlib
 python-dateutil
 requests
+gradio
+mammoth

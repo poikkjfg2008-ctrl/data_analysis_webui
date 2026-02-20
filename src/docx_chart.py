@@ -259,6 +259,7 @@ def inject_editable_charts(
     """
     向已保存的 docx 注入可编辑折线图，替换占位段落。
     charts_data: [(categories, values, title, unit), ...]，unit 为纵轴实际单位（元/辆等），可空。
+    仅处理文档中实际存在的占位符，避免多轮追加时重复 PartName/Relationship 导致 Word 报「无法读取的内容」。
     """
     tmpdir = tempfile.mkdtemp()
     try:
@@ -276,18 +277,35 @@ def inject_editable_charts(
         with open(rels_path, "r", encoding="utf-8") as f:
             rels_xml = f.read()
 
+        # 只处理文档里真实存在的占位符，避免多轮注入时重复 PartName/rels 损坏 docx
+        existing_placeholder_indices = [
+            idx
+            for idx in range(len(charts_data))
+            if doc_xml.find(f"{CHART_PLACEHOLDER_PREFIX}{idx}") != -1
+        ]
+        if not existing_placeholder_indices:
+            return
+
         next_r_id = 1
         for existing in re.findall(r'Relationship Id="rId(\d+)"', rels_xml):
             next_r_id = max(next_r_id, int(existing) + 1)
+        # 新图表使用不重复的文件名，避免覆盖已有 chart 并导致 Content Types 重复
+        existing_chart_nums = [
+            int(m)
+            for m in re.findall(r'Target="charts/chart(\d+)\.xml"', rels_xml)
+        ]
+        next_chart_num = max(existing_chart_nums, default=0) + 1
+
         rels_to_append = []
         chart_id_by_index = {}
 
-        for idx, item in enumerate(charts_data):
+        for i, idx in enumerate(existing_placeholder_indices):
+            item = charts_data[idx]
             categories = item[0]
             values = item[1]
             title = item[2]
             unit = item[3] if len(item) > 3 else None
-            chart_part_name = f"chart{idx + 1}.xml"
+            chart_part_name = f"chart{next_chart_num + i}.xml"
             r_id = f"rId{next_r_id}"
             next_r_id += 1
             chart_id_by_index[idx] = (r_id, chart_part_name)
@@ -302,7 +320,7 @@ def inject_editable_charts(
                 f'  <Relationship Id="{r_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/{chart_part_name}"/>'
             )
 
-        for idx in range(len(charts_data)):
+        for idx in existing_placeholder_indices:
             placeholder = f"{CHART_PLACEHOLDER_PREFIX}{idx}"
             r_id, _ = chart_id_by_index[idx]
             drawing = _build_drawing_xml(r_id)
@@ -335,9 +353,10 @@ def inject_editable_charts(
         content_types_path = os.path.join(tmpdir, "[Content_Types].xml")
         with open(content_types_path, "r", encoding="utf-8") as f:
             ct = f.read()
+        # 只为本次新加的 chart 文件添加 Override，避免重复 PartName
         overrides = "".join(
-            f'<Override PartName="/word/charts/chart{idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
-            for idx in range(len(charts_data))
+            f'<Override PartName="/word/charts/{chart_id_by_index[idx][1]}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
+            for idx in existing_placeholder_indices
         )
         ct = ct.replace("</Types>", overrides + "</Types>")
         with open(content_types_path, "w", encoding="utf-8") as f:

@@ -2,8 +2,23 @@
 .env
 .env.*
 !.env.example
+# API / LLM 配置（含 api_key、token 等）
 api/config.azure.json
 api/google.json
+**/config.*.json
+!**/*.example
+!**/config.azure.json.example
+!**/google.json.example
+# 本地覆盖配置
+**/config.local.*
+**/.local/
+# 凭证与密钥
+**/credentials*.json
+**/*credentials*
+**/*.pem
+**/*.key
+**/secrets/
+*.secret
 
 # 测试数据与产出
 data/

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from docx import Document
 from docx.oxml.ns import qn
+from docx.oxml.text.paragraph import CT_P
+from docx.oxml.table import CT_Tbl
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from src.analysis import compute_stats
 from src.docx_chart import CHART_PLACEHOLDER_PREFIX, inject_editable_charts
@@ -98,28 +102,22 @@ def _chart_categories_and_values(
     return categories, values
 
 
-def build_report(
-    output_dir: str,
-    title: str,
+def _add_metrics_section(
+    document: Document,
     date_range: str,
     metrics: List[str],
     df,
     date_col: str,
     config_path: str,
     units: Dict[str, str],
-) -> str:
-    os.makedirs(output_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"report_{timestamp}.docx"
-    output_path = os.path.join(output_dir, filename)
-
-    document = Document()
-    chart_data: list = []
-    document.add_heading(title, level=1)
+    chart_start_index: int,
+) -> List[Tuple[List[str], List[float], str, Optional[str]]]:
+    """向 document 追加「日期范围 + 各指标表格/占位符/结论」，返回本节的 chart_data。"""
+    chart_data: List[Tuple[List[str], List[float], str, Optional[str]]] = []
     document.add_paragraph(f"日期范围: {date_range}")
     document.add_paragraph(f"指标数量: {len(metrics)}")
 
-    for chart_idx, metric in enumerate(metrics):
+    for i, metric in enumerate(metrics):
         document.add_heading(metric, level=2)
         series_df = df[[date_col, metric]].dropna()
         stats = compute_stats(series_df[metric])
@@ -134,8 +132,8 @@ def build_report(
             row_cells[0].text = STAT_LABELS.get(key, f"{key} ({key})")
             row_cells[1].text = _format_number(value)
 
-        # 可编辑图表占位符；横轴按时间跨度：约一年按月、约一月按日；纵轴单位由 LLM 综合指标名与 Excel 单位自行判断
-        document.add_paragraph(f"{CHART_PLACEHOLDER_PREFIX}{chart_idx}")
+        placeholder_idx = chart_start_index + i
+        document.add_paragraph(f"{CHART_PLACEHOLDER_PREFIX}{placeholder_idx}")
         categories, vals = _chart_categories_and_values(series_df, date_col, metric)
         excel_unit = units.get(metric) or None
         try:
@@ -150,6 +148,33 @@ def build_report(
         except Exception as exc:
             document.add_paragraph(f"结论生成失败: {exc}")
 
+    return chart_data
+
+
+def build_report(
+    output_dir: str,
+    title: str,
+    date_range: str,
+    metrics: List[str],
+    df,
+    date_col: str,
+    config_path: str,
+    units: Dict[str, str],
+    output_path: Optional[str] = None,
+) -> Tuple[str, List[Tuple[List[str], List[float], str, Optional[str]]]]:
+    """生成新报告，返回 (docx 路径, chart_data)。若提供 output_path 则直接写入该路径（用于多轮共用同一文件）。"""
+    os.makedirs(output_dir, exist_ok=True)
+    if output_path is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"report_{timestamp}.docx"
+        output_path = os.path.join(output_dir, filename)
+
+    document = Document()
+    document.add_heading(title, level=1)
+    chart_data = _add_metrics_section(
+        document, date_range, metrics, df, date_col, config_path, units, chart_start_index=0
+    )
+
     _apply_document_fonts(document)
     document.save(output_path)
     if chart_data:
@@ -157,4 +182,108 @@ def build_report(
             inject_editable_charts(output_path, chart_data)
         except Exception:
             pass
-    return output_path
+    return output_path, chart_data
+
+
+def append_report_section(
+    doc_path: str,
+    section_title: str,
+    date_range: str,
+    metrics: List[str],
+    df,
+    date_col: str,
+    config_path: str,
+    units: Dict[str, str],
+    chart_start_index: int,
+) -> List[Tuple[List[str], List[float], str, Optional[str]]]:
+    """向已有 docx 追加一节（多轮对话的一轮），占位符从 chart_start_index 起。返回本节 chart_data。"""
+    document = Document(doc_path)
+    document.add_heading(section_title, level=1)
+    chart_data = _add_metrics_section(
+        document, date_range, metrics, df, date_col, config_path, units, chart_start_index
+    )
+    _apply_document_fonts(document)
+    document.save(doc_path)
+    return chart_data
+
+
+def append_summary_section(doc_path: str, title: str, content: str) -> None:
+    """向已有 docx 末尾追加一节综合总结（仅标题与段落，无图表）。"""
+    document = Document(doc_path)
+    document.add_heading(title, level=1)
+    for block in (content or "").strip().split("\n\n"):
+        block = block.strip()
+        if block:
+            document.add_paragraph(block)
+    _apply_document_fonts(document)
+    document.save(doc_path)
+
+
+def _iter_block_items(parent):
+    """按文档顺序 yield 段落与表格（用于提取报告正文）。"""
+    parent_elm = parent.element.body
+    for child in parent_elm.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, parent)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, parent)
+
+
+def extract_report_text_summary(doc_path: str, stop_at_heading: Optional[str] = "综合总结") -> str:
+    """从已生成的报告 docx 中提取正文（标题与表格统计），供综合总结 LLM 使用。
+    读到标题 stop_at_heading 时停止，不包含该节及之后内容（避免把旧总结当数据）。"""
+    if not os.path.isfile(doc_path):
+        return ""
+    try:
+        document = Document(doc_path)
+    except Exception:
+        return ""
+    lines: List[str] = []
+    for block in _iter_block_items(document):
+        if isinstance(block, Paragraph):
+            text = (block.text or "").strip()
+            if not text or text.startswith(CHART_PLACEHOLDER_PREFIX):
+                continue
+            if stop_at_heading and text.strip() == stop_at_heading:
+                break
+            lines.append(text)
+        elif isinstance(block, Table):
+            for row in block.rows:
+                cells = [cell.text.strip() if cell.text else "" for cell in row.cells]
+                if any(cells):
+                    lines.append("\t".join(cells))
+            lines.append("")
+    return "\n".join(lines).strip()
+
+
+def replace_summary_section(doc_path: str, title: str, content: str) -> None:
+    """找到文档中已存在的「综合总结」节（按标题匹配），删除该节及其后所有内容，再追加新的标题与正文。"""
+    document = Document(doc_path)
+    body = document.element.body
+    start_el = None
+    for para in document.paragraphs:
+        if (para.text or "").strip() == title.strip():
+            start_el = para._element
+            break
+    if start_el is None:
+        append_summary_section(doc_path, title, content)
+        return
+    children = list(body)
+    try:
+        start_idx = children.index(start_el)
+    except ValueError:
+        append_summary_section(doc_path, title, content)
+        return
+    # 保留末尾的 sectPr（节属性）
+    end_idx = len(children)
+    if children and "sectPr" in (children[-1].tag or ""):
+        end_idx = len(children) - 1
+    for i in range(start_idx, end_idx):
+        body.remove(children[i])
+    document.add_heading(title, level=1)
+    for block in (content or "").strip().split("\n\n"):
+        block = block.strip()
+        if block:
+            document.add_paragraph(block)
+    _apply_document_fonts(document)
+    document.save(doc_path)

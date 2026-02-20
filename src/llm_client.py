@@ -489,3 +489,66 @@ def generate_summary(
     payload = _post_inference_for_summary(config, messages)
     content_text = _require_output_text(payload)
     return str(content_text).strip()
+
+
+def generate_conversation_summary(
+    config_path: str,
+    conversation_text: str,
+    user_prompt_override: Optional[str] = None,
+    report_content: Optional[str] = None,
+) -> str:
+    """根据多轮对话与报告中的数据生成综合总结。
+    user_prompt_override: 若提供则作为完整用户消息（前端可能已含对话记录）。
+    report_content: 报告中各指标的标题与统计表（均值、期初期末、变化率等），供模型基于真实数据概括趋势。"""
+    config = _load_config(config_path)
+    system_prompt = (
+        "你是数据分析报告撰写助手。请结合「对话记录」与「报告中的数据」撰写「综合总结」。\n"
+        "报告中的数据包含各指标的名称、日期范围、以及统计表（计数、平均值、最小值、最大值、期初、期末、绝对变化、变化率等）。"
+        "请基于这些真实数据概括各指标的趋势、波动与结论（如同比/环比含义、波动区间、季节性等），"
+        "并可基于指标含义简要提及可能的影响因素（需求、政策、供给等），仅基于常识推断、勿编造具体数据。"
+        "若有多类指标，可做简要联动分析。输出纯文本、分段清晰、2–5 段、中文。不要输出 JSON 或标题外的多余格式。"
+    )
+    if (user_prompt_override or "").strip():
+        user_content = (user_prompt_override or "").strip()
+    else:
+        user_content = (
+            "请基于以下对话记录生成综合总结：\n\n" + (conversation_text or "（无对话内容）")
+        )
+    if (report_content or "").strip():
+        user_content += (
+            "\n\n【以下为报告中各指标的标题与统计表，请结合这些数据撰写总结】\n\n"
+            + (report_content or "").strip()
+        )
+    messages = [
+        _build_message("system", system_prompt),
+        _build_message("user", user_content),
+    ]
+    payload = _post_inference_for_summary(config, messages)
+    content_text = _require_output_text(payload)
+    return str(content_text).strip()
+
+
+def revise_summary(
+    config_path: str,
+    current_summary: str,
+    revision_instruction: str,
+) -> str:
+    """根据用户修改意见，在现有总结基础上修订并返回新的完整总结正文。"""
+    config = _load_config(config_path)
+    system_prompt = (
+        "你是数据分析报告撰写助手。用户会对当前「综合总结」提出修改意见，"
+        "请根据意见修改总结内容，只输出修改后的完整总结正文（纯文本、分段清晰、中文），不要输出解释或标题。"
+    )
+    user_content = (
+        "当前总结：\n\n"
+        + (current_summary or "（无）")
+        + "\n\n用户修改意见：\n"
+        + (revision_instruction or "（无）")
+    )
+    messages = [
+        _build_message("system", system_prompt),
+        _build_message("user", user_content),
+    ]
+    payload = _post_inference_for_summary(config, messages)
+    content_text = _require_output_text(payload)
+    return str(content_text).strip()

@@ -256,7 +256,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
     if filtered.empty:
         raise HTTPException(status_code=400, detail="时间窗口内无数据")
 
-    report_path = build_report(
+    report_path, _ = build_report(
         output_dir=request.output_dir,
         title="数据分析报告",
         date_range=window_label,
