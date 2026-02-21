@@ -8,7 +8,7 @@
       "name": "azure",
       "api_base_url": "https://YOUR-AZURE-REGION.openai.azure.com/openai/v1",
       "api_key": "YOUR_AZURE_OPENAI_API_KEY",
-      "models": ["gpt-4o"],
+      "models": ["gpt-5.2-chat"],
       "transformer": { "use": ["openai-responses"] }
     },
     {
@@ -19,5 +19,5 @@
       "transformer": { "use": ["vertex-gemini"] }
     }
   ],
-  "Router": { "default": "azure,gpt-4o" }
+  "Router": { "default": "azure,gpt-5.2-chat" }
 }

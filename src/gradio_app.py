@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import tempfile
@@ -607,16 +608,34 @@ def build_ui() -> gr.Blocks:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Gradio 数据分析 WebUI")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="服务监听端口，默认 5600；未指定时可用环境变量 GRADIO_SERVER_PORT 覆盖。端口被占用时自动尝试 +1。",
+    )
+    args = parser.parse_args()
     demo = build_ui()
-    base_port = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
+    # 端口优先级：--port > 环境变量 GRADIO_SERVER_PORT > 默认 5600
+    if args.port is not None:
+        base_port = args.port
+    else:
+        base_port = int(os.environ.get("GRADIO_SERVER_PORT", "5600"))
     last_error = None
     for attempt in range(5):
+        port = base_port + attempt
         try:
-            demo.launch(server_name="0.0.0.0", server_port=base_port + attempt)
+            demo.launch(server_name="0.0.0.0", server_port=port)
             return
         except OSError as e:
             last_error = e
-            if "10048" in str(e) or "empty port" in str(e).lower() or "Only one usage" in str(e):
+            # Windows 10048 / WSAEADDRINUSE、Linux/Mac 端口占用等
+            err_str = str(e).lower()
+            if any(
+                x in err_str or x in str(e)
+                for x in ("10048", "empty port", "only one usage", "address already in use", "errno 98", "eaddrinuse")
+            ):
                 continue
             raise
     if last_error is not None:
