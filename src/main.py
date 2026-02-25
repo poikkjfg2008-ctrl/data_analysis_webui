@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field
 
 from src.analysis import resolve_window
 from src.excel_parser import load_excel
+from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metrics
 from src.llm_client import match_indicators_similarity, parse_prompt
 from src.report_docx import build_report
+from src.settings import get_config_path, get_output_dir
 
 
 def _indicator_phrases_from_prompt(user_prompt: str) -> List[str]:
@@ -52,7 +54,7 @@ class AnalyzeRequest(BaseModel):
     excel_path: str = Field(default="D:/codes/data_analysis/data/test.xlsx")
     user_prompt: str = Field(..., min_length=1)
     sheet_name: Optional[str] = None
-    output_dir: str = Field(default="D:/codes/data_analysis/data/reports")
+    output_dir: str = Field(default_factory=get_output_dir)
     selected_indicator_names: Optional[List[str]] = None
     use_llm_structure: bool = Field(default=True, description="用 LLM 推断 Excel 日期/数值列结构，适配任意表格式；设为 false 则使用启发式规则")
 
@@ -79,7 +81,7 @@ class MatchResponse(BaseModel):
 
 app = FastAPI(title="Data Analysis Agent")
 
-CONFIG_PATH = "D:/codes/data_analysis/api/config.azure.json"
+CONFIG_PATH = get_config_path()
 
 
 @app.post("/analyze/match", response_model=MatchResponse)
@@ -145,25 +147,13 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
     date_max = df[date_col].max()
     date_range = (date_min.date().isoformat(), date_max.date().isoformat())
 
-    normalized = {c.lower().strip(): c for c in parsed_excel.numeric_columns}
-    display_to_column = {
-        parsed_excel.column_display_names.get(c, c): c for c in parsed_excel.numeric_columns
-    }
-
     if request.selected_indicator_names:
         # 用户已在 /analyze/match 歧义时选择，直接使用所选显示名解析为列名
-        resolved_metrics = []
-        for name in request.selected_indicator_names:
-            key = str(name).strip()
-            if key in display_to_column:
-                resolved_metrics.append(display_to_column[key])
-            elif key.lower() in normalized:
-                resolved_metrics.append(normalized[key.lower()])
-            else:
-                for c in parsed_excel.numeric_columns:
-                    if key in parsed_excel.column_display_names.get(c, c) or key in c:
-                        resolved_metrics.append(c)
-                        break
+        resolved_metrics = resolve_selected_metrics(
+            selected_names=request.selected_indicator_names,
+            numeric_columns=parsed_excel.numeric_columns,
+            column_display_names=parsed_excel.column_display_names,
+        )
         if not resolved_metrics:
             raise HTTPException(status_code=400, detail="所选指标未匹配到任何列")
         indicator_names = request.selected_indicator_names
@@ -191,28 +181,12 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
             raise HTTPException(status_code=400, detail=f"解析用户需求失败: {exc}")
 
         indicator_names = parsed_prompt.get("indicator_names") or []
-        user_prompt_lower = request.user_prompt.lower()
-        all_requested = any(
-            keyword in user_prompt_lower
-            for keyword in ["全部", "所有", "全部指标", "所有指标", "全部列", "所有列"]
+        resolved_metrics, all_requested = resolve_prompt_metrics(
+            indicator_names=indicator_names,
+            prompt=request.user_prompt,
+            numeric_columns=parsed_excel.numeric_columns,
+            column_display_names=parsed_excel.column_display_names,
         )
-
-        resolved_metrics = []
-        for name in indicator_names:
-            key = str(name).lower().strip()
-            if key in normalized:
-                resolved_metrics.append(normalized[key])
-            else:
-                for c in parsed_excel.numeric_columns:
-                    if key in c.lower() and c not in resolved_metrics:
-                        resolved_metrics.append(c)
-                        break
-                else:
-                    for c in parsed_excel.numeric_columns:
-                        display = parsed_excel.column_display_names.get(c, c)
-                        if key in display.lower() and c not in resolved_metrics:
-                            resolved_metrics.append(c)
-                            break
 
         if not indicator_names:
             if all_requested:

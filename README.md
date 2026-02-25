@@ -102,6 +102,21 @@ uvicorn src.main:app --reload
 
 未配置或未填写有效 `api_base_url`、`api_key` 时，依赖 LLM 的功能（如智能指标解析、报告生成）将不可用；仅上传与基础解析仍可使用。更多说明见 `api/README.md`。
 
+### 使用本地 Ollama（OpenAI 兼容接口）
+
+1. 启动 Ollama 服务：`ollama serve`
+2. 拉取模型（示例）：`ollama pull qwen2.5:14b`
+3. 将 `api/config.azure.json.example` 复制为 `api/config.azure.json`，并将 provider 配置为本地地址（如 `http://127.0.0.1:11434/v1`）。
+4. 在 `Router.default` 中设置默认模型，例如：`"ollama,qwen2.5:14b"`。
+
+详细配置与二次开发文档见：`docs/secondary_development.md`。
+
+### 环境变量覆盖（推荐用于部署）
+
+- `DATA_ANALYSIS_CONFIG_PATH`：覆盖 LLM 配置文件路径（默认 `api/config.azure.json`）。
+- `DATA_ANALYSIS_OUTPUT_DIR`：覆盖报告输出目录（默认 `data/reports`）。
+
+
 ---
 
 ## 使用说明

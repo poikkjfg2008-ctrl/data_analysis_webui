@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +23,7 @@ import requests
 from src.analysis import resolve_window
 from src.excel_parser import load_excel
 from src.file_ingest import parse_uploads
+from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metrics
 from src.llm_client import (
     generate_conversation_summary,
     match_indicators_similarity,
@@ -37,9 +38,10 @@ from src.report_docx import (
     extract_report_text_summary,
     replace_summary_section,
 )
+from src.settings import get_config_path, get_output_dir
 
-CONFIG_PATH = "D:/codes/data_analysis/api/config.azure.json"
-DEFAULT_OUTPUT_DIR = "D:/codes/data_analysis/data/reports"
+CONFIG_PATH = get_config_path()
+DEFAULT_OUTPUT_DIR = get_output_dir()
 # 多轮对话共用的报告文件路径，不依赖 state 传递，确保始终追加到同一 docx
 SESSION_REPORT_PATH = os.path.join(DEFAULT_OUTPUT_DIR, "session_report.docx")
 
@@ -75,6 +77,10 @@ class SessionState:
     session_chart_data: Optional[List] = None
     # 当前综合总结正文，用于多轮「修改总结」时传入 LLM
     session_summary_text: Optional[str] = None
+    # 会话状态快照，用于展示进度变化，而非仅依赖当前节点列表
+    workflow_status: str = "idle"
+    workflow_nodes: List[str] = field(default_factory=list)
+    last_status_snapshot: Optional[Dict[str, Any]] = None
 
 
 def _update_state_with_uploads(state: SessionState, uploads) -> SessionState:
@@ -138,28 +144,15 @@ def _resolve_indicators(
     parsed_excel,
     selected_names: Optional[List[str]],
 ) -> Tuple[List[str], List[str], bool]:
-    normalized = {c.lower().strip(): c for c in parsed_excel.numeric_columns}
-    display_to_column = {
-        parsed_excel.column_display_names.get(c, c): c for c in parsed_excel.numeric_columns
-    }
-
     if selected_names:
-        resolved_metrics = []
-        for name in selected_names:
-            key = str(name).strip()
-            if key in display_to_column:
-                resolved_metrics.append(display_to_column[key])
-            elif key.lower() in normalized:
-                resolved_metrics.append(normalized[key.lower()])
-            else:
-                for c in parsed_excel.numeric_columns:
-                    if key in parsed_excel.column_display_names.get(c, c) or key in c:
-                        resolved_metrics.append(c)
-                        break
+        resolved_metrics = resolve_selected_metrics(
+            selected_names=selected_names,
+            numeric_columns=parsed_excel.numeric_columns,
+            column_display_names=parsed_excel.column_display_names,
+        )
         if not resolved_metrics:
             raise ValueError("所选指标未匹配到任何列")
-        indicator_names = selected_names
-        return indicator_names, resolved_metrics, False
+        return selected_names, resolved_metrics, False
 
     parsed_prompt = parse_prompt(
         config_path=CONFIG_PATH,
@@ -172,32 +165,15 @@ def _resolve_indicators(
         sheets=parsed_excel.available_sheets,
     )
     indicator_names = parsed_prompt.get("indicator_names") or []
-    user_prompt_lower = prompt.lower()
-    all_requested = any(
-        keyword in user_prompt_lower
-        for keyword in ["全部", "所有", "全部指标", "所有指标", "全部列", "所有列"]
+    resolved_metrics, all_requested = resolve_prompt_metrics(
+        indicator_names=indicator_names,
+        prompt=prompt,
+        numeric_columns=parsed_excel.numeric_columns,
+        column_display_names=parsed_excel.column_display_names,
     )
-
-    resolved_metrics: List[str] = []
-    for name in indicator_names:
-        key = str(name).lower().strip()
-        if key in normalized:
-            resolved_metrics.append(normalized[key])
-        else:
-            for c in parsed_excel.numeric_columns:
-                if key in c.lower() and c not in resolved_metrics:
-                    resolved_metrics.append(c)
-                    break
-            else:
-                for c in parsed_excel.numeric_columns:
-                    display = parsed_excel.column_display_names.get(c, c)
-                    if key in display.lower() and c not in resolved_metrics:
-                        resolved_metrics.append(c)
-                        break
 
     if not indicator_names:
         if all_requested:
-            resolved_metrics = parsed_excel.numeric_columns
             indicator_names = [parsed_excel.column_display_names.get(c, c) for c in resolved_metrics]
         else:
             raise ValueError("请明确指标名称，或在描述中说明'全部指标/所有指标'")
@@ -213,7 +189,6 @@ def _resolve_indicators(
     if not resolved_metrics:
         raise ValueError("未匹配到有效指标列")
 
-    resolved_metrics = list(dict.fromkeys(resolved_metrics))
     return indicator_names, resolved_metrics, all_requested
 
 
@@ -353,6 +328,54 @@ def _append_turn(history: ChatHistory, user_msg: str, assistant_msg: str) -> Cha
     return out
 
 
+def _resolve_candidate_selection(message: str, candidates: List[Dict[str, str]]) -> List[str]:
+    """将用户输入解析为候选指标名（支持逗号分隔与子串匹配）。"""
+    text = (message or "").strip()
+    if not text:
+        return []
+    by_display = {c.get("display", ""): c.get("display", "") for c in candidates}
+
+    selected = [item.strip() for item in text.split(",") if item.strip()]
+    selected = [s for s in selected if s in by_display]
+    if selected:
+        return list(dict.fromkeys(selected))
+
+    fuzzy = [display for display in by_display if display and display in text]
+    return list(dict.fromkeys(fuzzy))
+
+
+def _update_status_snapshot(state: SessionState, status: str, node_sequence: List[str]) -> None:
+    state.workflow_status = status
+    state.workflow_nodes = list(dict.fromkeys(node_sequence))
+    state.last_status_snapshot = {
+        "status": state.workflow_status,
+        "node_sequence": list(state.workflow_nodes),
+    }
+
+
+def _build_progress_delta(previous: Optional[Dict[str, Any]], current: Dict[str, Any]) -> str:
+    """根据前后状态快照增量展示进度，避免误用“当前节点列表=总进度”。"""
+    if not previous:
+        return f"状态: {current.get('status', 'unknown')}"
+
+    prev_status = str(previous.get("status", ""))
+    curr_status = str(current.get("status", ""))
+    prev_nodes = [str(n) for n in (previous.get("node_sequence") or [])]
+    curr_nodes = [str(n) for n in (current.get("node_sequence") or [])]
+
+    changes: List[str] = []
+    if prev_status != curr_status:
+        changes.append(f"状态 {prev_status or 'unknown'} → {curr_status}")
+
+    new_nodes = [n for n in curr_nodes if n not in prev_nodes]
+    if new_nodes:
+        changes.append("新增节点: " + " → ".join(new_nodes))
+
+    if not changes:
+        return f"状态: {curr_status}; 节点无新增"
+    return "；".join(changes)
+
+
 def handle_message(
     message: str,
     history: Any,
@@ -363,6 +386,7 @@ def handle_message(
     use_llm_structure: bool,
     use_message_for_summary_revision: bool,
 ) -> Tuple[ChatHistory, SessionState, str, Optional[str], Any]:
+    previous_snapshot = dict(state.last_status_snapshot or {}) if state.last_status_snapshot else None
     state = _update_state_with_uploads(state, uploads)
     combined_prompt = _combine_prompt(message, state.context_text)
     hist = _normalize_chat_history(history)
@@ -370,77 +394,104 @@ def handle_message(
     def _box_from_hist(new_hist: ChatHistory):
         return gr.update(value=_build_summary_prompt_from_history(new_hist))
 
+    def _reply_with_status(new_hist: ChatHistory, report_html: str = "", report_file: Optional[str] = None):
+        delta = _build_progress_delta(previous_snapshot, state.last_status_snapshot or {"status": state.workflow_status, "node_sequence": state.workflow_nodes})
+        if new_hist and new_hist[-1].get("role") == "assistant":
+            content = new_hist[-1].get("content", "")
+            new_hist[-1]["content"] = f"{content}\n\n【进度】{delta}"
+        return new_hist, state, report_html, report_file, _box_from_hist(new_hist)
+
     # 勾选「用于修改总结」且已有总结时：本条消息作为修改意见，多轮修订总结并回写到提示词框
     if use_message_for_summary_revision and (state.session_summary_text or "").strip() and combined_prompt:
         if not os.path.isfile(SESSION_REPORT_PATH):
+            _update_status_snapshot(state, "waiting_input", ["summary_revision"])
             new_hist = _append_turn(hist, message, "当前尚无报告文档，无法修改总结。请先生成报告与综合总结。")
-            return new_hist, state, "", None, _box_from_hist(new_hist)
+            return _reply_with_status(new_hist)
         try:
+            _update_status_snapshot(state, "processing", ["summary_revision", "llm_revise_summary"])
             revised = revise_summary(
                 CONFIG_PATH,
                 state.session_summary_text,
                 combined_prompt,
             )
         except requests.exceptions.Timeout:
+            _update_status_snapshot(state, "error", ["summary_revision", "timeout"])
             new_hist = _append_turn(hist, message, "请求 AI 服务超时，请稍后重试。")
-            return new_hist, state, "", SESSION_REPORT_PATH, _box_from_hist(new_hist)
+            return _reply_with_status(new_hist, "", SESSION_REPORT_PATH)
         except Exception as exc:
+            _update_status_snapshot(state, "error", ["summary_revision", "revise_failed"])
             new_hist = _append_turn(hist, message, f"修改总结失败: {exc}")
-            return new_hist, state, "", SESSION_REPORT_PATH, _box_from_hist(new_hist)
+            return _reply_with_status(new_hist, "", SESSION_REPORT_PATH)
         try:
             replace_summary_section(SESSION_REPORT_PATH, "综合总结", revised)
         except Exception as exc:
+            _update_status_snapshot(state, "error", ["summary_revision", "write_failed"])
             new_hist = _append_turn(hist, message, f"总结已修订但写入报告失败: {exc}")
-            return new_hist, state, "", SESSION_REPORT_PATH, _box_from_hist(new_hist)
+            return _reply_with_status(new_hist, "", SESSION_REPORT_PATH)
         state.session_summary_text = revised
         html = _render_report(SESSION_REPORT_PATH)
-        reply = "已根据您的意见更新综合总结，并已写回报告。请查看右侧报告预览。"
-        new_hist = _append_turn(hist, message, reply)
-        return new_hist, state, _wrap_report_preview(html), SESSION_REPORT_PATH, _box_from_hist(new_hist)
+        _update_status_snapshot(state, "completed", ["summary_revision", "done"])
+        new_hist = _append_turn(hist, message, "已根据您的意见更新综合总结，并已写回报告。请查看右侧报告预览。")
+        return _reply_with_status(new_hist, _wrap_report_preview(html), SESSION_REPORT_PATH)
 
     if not combined_prompt:
+        _update_status_snapshot(state, "waiting_input", ["await_prompt"])
         new_hist = _append_turn(hist, message, "请先输入分析需求。")
-        return new_hist, state, "", None, _box_from_hist(new_hist)
+        return _reply_with_status(new_hist)
 
     if not state.excel_path:
+        _update_status_snapshot(state, "waiting_input", ["await_excel"])
         new_hist = _append_turn(hist, message, "请先上传 Excel 文件。")
-        return new_hist, state, "", None, _box_from_hist(new_hist)
+        return _reply_with_status(new_hist)
 
     try:
+        _update_status_snapshot(state, "processing", ["load_excel"])
         parsed_excel = _load_parsed_excel(state, sheet_name, use_llm_structure)
     except Exception as exc:
+        _update_status_snapshot(state, "error", ["load_excel", "failed"])
         new_hist = _append_turn(hist, message, f"无法读取 Excel: {exc}")
-        return new_hist, state, "", None, _box_from_hist(new_hist)
+        return _reply_with_status(new_hist)
 
+    effective_prompt = combined_prompt
     if state.pending_candidates:
-        chosen = [c.strip() for c in message.split(",") if c.strip()]
+        chosen = _resolve_candidate_selection(message, state.pending_candidates)
         if not chosen:
-            new_hist = _append_turn(hist, message, "请从候选指标中选择后再发送，例如: 指标A, 指标B")
-            return new_hist, state, "", None, _box_from_hist(new_hist)
+            options = ", ".join(c["display"] for c in state.pending_candidates)
+            _update_status_snapshot(state, "interrupted", ["indicator_match", "await_user_selection"])
+            new_hist = _append_turn(hist, message, f"当前工作流处于中断等待状态，请从候选指标中选择后发送（可逗号分隔）: {options}")
+            return _reply_with_status(new_hist)
         state.selected_indicators = chosen
+        effective_prompt = state.pending_prompt or combined_prompt
         state.pending_candidates = None
+        state.pending_prompt = None
+        _update_status_snapshot(state, "processing", ["resume_from_interrupted", "build_report"])
     else:
         try:
+            _update_status_snapshot(state, "processing", ["indicator_match"])
             candidates = _ensure_candidates(combined_prompt, parsed_excel)
         except requests.exceptions.Timeout:
+            _update_status_snapshot(state, "error", ["indicator_match", "timeout"])
             new_hist = _append_turn(hist, message, "请求 AI 服务超时，请稍后重试。")
-            return new_hist, state, "", None, _box_from_hist(new_hist)
+            return _reply_with_status(new_hist)
         except Exception as exc:
+            _update_status_snapshot(state, "error", ["indicator_match", "failed"])
             new_hist = _append_turn(hist, message, f"指标匹配失败: {exc}")
-            return new_hist, state, "", None, _box_from_hist(new_hist)
+            return _reply_with_status(new_hist)
         if candidates:
             state.pending_candidates = candidates
             state.pending_prompt = combined_prompt
             options = ", ".join(c["display"] for c in candidates)
-            new_hist = _append_turn(hist, message, f"指标存在歧义，请从以下候选中选择并回复: {options}")
-            return new_hist, state, "", None, _box_from_hist(new_hist)
+            _update_status_snapshot(state, "interrupted", ["indicator_match", "await_user_selection"])
+            new_hist = _append_turn(hist, message, f"指标存在歧义，工作流已暂停。请从以下候选中选择并回复: {options}")
+            return _reply_with_status(new_hist)
 
     round_index = len(hist) // 2 + 1
     is_first_round = len(hist) == 0
     try:
+        _update_status_snapshot(state, "processing", ["build_report", "append_section" if not is_first_round else "new_report"])
         report_path, window_label, display_names, chart_data, is_append = _build_report_from_state(
             state,
-            combined_prompt,
+            effective_prompt,
             sheet_name,
             time_window_override,
             use_llm_structure,
@@ -448,11 +499,13 @@ def handle_message(
             is_first_round,
         )
     except requests.exceptions.Timeout:
+        _update_status_snapshot(state, "error", ["build_report", "timeout"])
         new_hist = _append_turn(hist, message, "请求 AI 服务超时，请稍后重试。")
-        return new_hist, state, "", None, _box_from_hist(new_hist)
+        return _reply_with_status(new_hist)
     except Exception as exc:
+        _update_status_snapshot(state, "error", ["build_report", "failed"])
         new_hist = _append_turn(hist, message, f"生成报告失败: {exc}")
-        return new_hist, state, "", None, _box_from_hist(new_hist)
+        return _reply_with_status(new_hist)
 
     if is_append:
         state.session_chart_data = (state.session_chart_data or []) + list(chart_data)
@@ -465,9 +518,10 @@ def handle_message(
         state.session_chart_data = list(chart_data)
 
     html = _render_report(report_path)
+    _update_status_snapshot(state, "completed", ["build_report", "render_preview", "done"])
     reply = f"已生成报告（已叠加到同一文档）。时间范围: {window_label}，指标: {', '.join(display_names)}"
     new_hist = _append_turn(hist, message, reply)
-    return new_hist, state, _wrap_report_preview(html), report_path, _box_from_hist(new_hist)
+    return _reply_with_status(new_hist, _wrap_report_preview(html), report_path)
 
 
 def handle_generate_summary(
@@ -524,40 +578,66 @@ def handle_generate_summary(
 
 # 左侧对话区单滚动条、右侧报告预览独立滚动，避免双滚动条与整页无限下移
 _UI_CSS = """
-#conversation-chatbot { max-height: 55vh; overflow-y: auto !important; overflow-x: hidden; }
-#conversation-chatbot .message { overflow-wrap: break-word; }
+#app-title { margin-bottom: 8px; }
+#conversation-chatbot {
+  height: 62vh;
+  max-height: 62vh;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 10px;
+}
+#conversation-chatbot .message { overflow-wrap: anywhere; line-height: 1.7; }
+.control-card {
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--block-background-fill, #fff);
+}
 """
 
 
 def build_ui() -> gr.Blocks:
     with gr.Blocks(title="数据分析 WebUI", css=_UI_CSS) as demo:
-        gr.Markdown("# 数据分析 WebUI\n上传 Excel/Word/文本，输入分析需求并生成报告。")
+        gr.Markdown(
+            "# 数据分析 WebUI\n上传 Excel/Word/文本，输入分析需求并生成报告。"
+            "\n- 支持多轮追问与报告追加\n- 支持中断后恢复（歧义指标确认）\n- 支持长文本总结与二次修订",
+            elem_id="app-title",
+        )
         state = gr.State(SessionState())
 
-        with gr.Row():
-            with gr.Column(scale=3):
-                chatbot = gr.Chatbot(label="对话", elem_id="conversation-chatbot")
-                message = gr.Textbox(label="输入", lines=3, placeholder="例如：分析 2024Q4 产量趋势")
-                uploads = gr.Files(label="上传文件", file_types=[".xlsx", ".xls", ".docx", ".txt"],
-                                    file_count="multiple")
-                sheet_name = gr.Textbox(label="Sheet 名称 (可选)")
-                time_window = gr.Textbox(label="时间窗口 (可选，YYYY-MM-DD 至 YYYY-MM-DD)")
-                use_llm_structure = gr.Checkbox(label="使用 LLM 识别表结构", value=True)
-                use_message_for_summary_revision = gr.Checkbox(
-                    label="将本条消息用于修改总结",
-                    value=False,
-                    info="勾选后发送的内容将作为对当前综合总结的修改意见，由 AI 修订总结并回写到下方框",
-                )
-                send_btn = gr.Button("发送")
-                summary_btn = gr.Button("生成综合总结")
-                clear_btn = gr.Button("清空对话")
-
+        with gr.Row(equal_height=False):
             with gr.Column(scale=4):
+                chatbot = gr.Chatbot(label="对话", elem_id="conversation-chatbot")
+                with gr.Group(elem_classes=["control-card"]):
+                    message = gr.Textbox(label="输入", lines=4, placeholder="例如：分析 2024Q4 产量趋势")
+                    send_btn = gr.Button("发送", variant="primary")
+
+                with gr.Accordion("文件与分析参数", open=True):
+                    uploads = gr.Files(
+                        label="上传文件",
+                        file_types=[".xlsx", ".xls", ".docx", ".txt"],
+                        file_count="multiple",
+                    )
+                    sheet_name = gr.Textbox(label="Sheet 名称 (可选)")
+                    time_window = gr.Textbox(label="时间窗口 (可选，YYYY-MM-DD 至 YYYY-MM-DD)")
+                    use_llm_structure = gr.Checkbox(label="使用 LLM 识别表结构", value=True)
+
+                with gr.Accordion("总结修订", open=False):
+                    use_message_for_summary_revision = gr.Checkbox(
+                        label="将本条消息用于修改总结",
+                        value=False,
+                        info="勾选后发送的内容将作为对当前综合总结的修改意见，由 AI 修订总结并回写到下方框",
+                    )
+                    summary_btn = gr.Button("生成综合总结")
+                    clear_btn = gr.Button("清空对话")
+
+            with gr.Column(scale=5):
                 summary_prompt_box = gr.Textbox(
                     label="综合总结提示词",
-                    lines=10,
+                    lines=9,
                     value=DEFAULT_SUMMARY_PROMPT,
-                    placeholder="默认提示词会随对话自动追加「对话记录」；可在此编辑后再点「生成综合总结」。总结正文仅写入报告预览，不覆盖本框。",
+                    placeholder="默认提示词会随对话自动追加「对话记录」；可在此编辑后再点「生成综合总结」。",
                 )
                 report_html = gr.HTML(label="报告预览")
                 report_file = gr.File(label="报告下载")
@@ -597,7 +677,7 @@ def build_ui() -> gr.Blocks:
         )
 
         def _clear():
-            return [], SessionState(), "", None, DEFAULT_SUMMARY_PROMPT  # 清空后下一轮重新生成新 docx，总结框恢复默认提示词
+            return [], SessionState(), "", None, DEFAULT_SUMMARY_PROMPT
 
         clear_btn.click(
             _clear,
