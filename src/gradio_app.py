@@ -23,6 +23,7 @@ import requests
 from src.analysis import resolve_window
 from src.excel_parser import load_excel
 from src.file_ingest import parse_uploads
+from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metrics
 from src.llm_client import (
     generate_conversation_summary,
     match_indicators_similarity,
@@ -37,9 +38,10 @@ from src.report_docx import (
     extract_report_text_summary,
     replace_summary_section,
 )
+from src.settings import get_config_path, get_output_dir
 
-CONFIG_PATH = "D:/codes/data_analysis/api/config.azure.json"
-DEFAULT_OUTPUT_DIR = "D:/codes/data_analysis/data/reports"
+CONFIG_PATH = get_config_path()
+DEFAULT_OUTPUT_DIR = get_output_dir()
 # 多轮对话共用的报告文件路径，不依赖 state 传递，确保始终追加到同一 docx
 SESSION_REPORT_PATH = os.path.join(DEFAULT_OUTPUT_DIR, "session_report.docx")
 
@@ -138,28 +140,15 @@ def _resolve_indicators(
     parsed_excel,
     selected_names: Optional[List[str]],
 ) -> Tuple[List[str], List[str], bool]:
-    normalized = {c.lower().strip(): c for c in parsed_excel.numeric_columns}
-    display_to_column = {
-        parsed_excel.column_display_names.get(c, c): c for c in parsed_excel.numeric_columns
-    }
-
     if selected_names:
-        resolved_metrics = []
-        for name in selected_names:
-            key = str(name).strip()
-            if key in display_to_column:
-                resolved_metrics.append(display_to_column[key])
-            elif key.lower() in normalized:
-                resolved_metrics.append(normalized[key.lower()])
-            else:
-                for c in parsed_excel.numeric_columns:
-                    if key in parsed_excel.column_display_names.get(c, c) or key in c:
-                        resolved_metrics.append(c)
-                        break
+        resolved_metrics = resolve_selected_metrics(
+            selected_names=selected_names,
+            numeric_columns=parsed_excel.numeric_columns,
+            column_display_names=parsed_excel.column_display_names,
+        )
         if not resolved_metrics:
             raise ValueError("所选指标未匹配到任何列")
-        indicator_names = selected_names
-        return indicator_names, resolved_metrics, False
+        return selected_names, resolved_metrics, False
 
     parsed_prompt = parse_prompt(
         config_path=CONFIG_PATH,
@@ -172,32 +161,15 @@ def _resolve_indicators(
         sheets=parsed_excel.available_sheets,
     )
     indicator_names = parsed_prompt.get("indicator_names") or []
-    user_prompt_lower = prompt.lower()
-    all_requested = any(
-        keyword in user_prompt_lower
-        for keyword in ["全部", "所有", "全部指标", "所有指标", "全部列", "所有列"]
+    resolved_metrics, all_requested = resolve_prompt_metrics(
+        indicator_names=indicator_names,
+        prompt=prompt,
+        numeric_columns=parsed_excel.numeric_columns,
+        column_display_names=parsed_excel.column_display_names,
     )
-
-    resolved_metrics: List[str] = []
-    for name in indicator_names:
-        key = str(name).lower().strip()
-        if key in normalized:
-            resolved_metrics.append(normalized[key])
-        else:
-            for c in parsed_excel.numeric_columns:
-                if key in c.lower() and c not in resolved_metrics:
-                    resolved_metrics.append(c)
-                    break
-            else:
-                for c in parsed_excel.numeric_columns:
-                    display = parsed_excel.column_display_names.get(c, c)
-                    if key in display.lower() and c not in resolved_metrics:
-                        resolved_metrics.append(c)
-                        break
 
     if not indicator_names:
         if all_requested:
-            resolved_metrics = parsed_excel.numeric_columns
             indicator_names = [parsed_excel.column_display_names.get(c, c) for c in resolved_metrics]
         else:
             raise ValueError("请明确指标名称，或在描述中说明'全部指标/所有指标'")
@@ -213,7 +185,6 @@ def _resolve_indicators(
     if not resolved_metrics:
         raise ValueError("未匹配到有效指标列")
 
-    resolved_metrics = list(dict.fromkeys(resolved_metrics))
     return indicator_names, resolved_metrics, all_requested
 
 
