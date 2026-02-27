@@ -16,6 +16,7 @@ class ParsedExcel:
     available_sheets: List[str]
     units: Dict[str, str]
     column_display_names: Dict[str, str] = field(default_factory=dict)
+    location_columns: List[str] = field(default_factory=list)
 
 
 def _select_best_sheet(xls: pd.ExcelFile, preferred: Optional[str]) -> str:
@@ -38,10 +39,27 @@ def _detect_date_column(df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
     best_ratio = -1.0
     ratios: Dict[str, float] = {}
 
+    # 半导体测试常见时间轴候选字段名。
+    preferred_tokens = (
+        "time",
+        "date",
+        "timestamp",
+        "testtime",
+        "测量时间",
+        "测试时间",
+        "日期",
+    )
+
     for col in df.columns:
         series = _coerce_datetime(df[col])
         ratio = series.notna().mean() if len(series) else 0.0
         ratios[str(col)] = ratio
+        normalized = _normalize_column_name(col)
+
+        # 若列名显式是时间语义，给轻微加权，避免被偶然可解析列抢占。
+        if any(token in normalized for token in preferred_tokens):
+            ratio += 0.05
+
         if ratio > best_ratio:
             best_ratio = ratio
             best_col = col
@@ -99,6 +117,56 @@ def _coerce_datetime(series: pd.Series) -> pd.Series:
 
 def _normalize_column_name(name: str) -> str:
     return "".join(str(name).strip().lower().split())
+
+
+def _is_semiconductor_location_column(col: str, raw_series: pd.Series) -> bool:
+    """识别 wafer/lot/die/wl 等定位字段，避免误当作分析指标。"""
+    normalized = _normalize_column_name(col)
+    tokens = {
+        "wafer",
+        "waferid",
+        "lot",
+        "lotid",
+        "die",
+        "dieid",
+        "diex",
+        "diey",
+        "x",
+        "y",
+        "xy",
+        "wl",
+        "wordline",
+        "wordlinenumber",
+        "site",
+        "chip",
+        "device",
+        "cell",
+        "row",
+        "col",
+        "column",
+        "page",
+        "block",
+        "string",
+        "plane",
+        "index",
+        "id",
+    }
+    cn_tokens = ("晶圆", "批次", "片号", "字线", "位线", "坐标", "位置", "编号")
+
+    if any(token in normalized for token in tokens):
+        return True
+    if any(token in str(col) for token in cn_tokens):
+        return True
+
+    # 纯 ID 型列：基数高 + 以离散取值为主，不应当做连续指标。
+    as_text = raw_series.astype(str).str.strip()
+    if len(as_text) == 0:
+        return False
+    unique_ratio = as_text.nunique(dropna=True) / max(len(as_text), 1)
+    numeric_ratio = pd.to_numeric(raw_series, errors="coerce").notna().mean()
+    if unique_ratio > 0.8 and numeric_ratio < 0.2:
+        return True
+    return False
 
 
 def _extract_unit_from_name(name: str) -> Optional[str]:
@@ -176,11 +244,23 @@ def load_excel(
 
     date_col, ratios = _detect_date_column(df)
     date_series = _coerce_datetime(df[date_col])
+
+    # 某些测试数据没有真实时间列（仅有批次/定位/性能参数），降级为样本序号轴。
+    if date_series.notna().mean() < 0.2:
+        fallback_col = "__sample_index__"
+        df[fallback_col] = pd.to_datetime(pd.RangeIndex(start=0, stop=len(df), step=1), unit="D", origin="2000-01-01")
+        date_col = fallback_col
+        date_series = df[date_col]
+
     df = df.assign(**{date_col: date_series})
 
     numeric_cols: List[str] = []
+    location_cols: List[str] = []
     for col in df.columns:
         if col == date_col:
+            continue
+        if _is_semiconductor_location_column(str(col), df[col]):
+            location_cols.append(str(col))
             continue
         series = pd.to_numeric(df[col], errors="coerce")
         if series.notna().mean() > 0.5:
@@ -257,4 +337,5 @@ def load_excel(
         available_sheets=xls.sheet_names,
         units=units,
         column_display_names=column_display_names,
+        location_columns=location_cols,
     )
