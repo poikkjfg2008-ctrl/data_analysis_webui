@@ -13,6 +13,7 @@ class LLMConfig:
     timeout_ms: int
     default_provider: str
     default_model: str
+    provider_kind: str
     api_base_url: str
     api_key: str
 
@@ -43,17 +44,30 @@ def _load_config(config_path: str) -> LLMConfig:
                 api_key = str(provider.get("api_key", "")).strip()
                 break
 
-    if not api_base_url or not api_key:
+    if provider_name.lower() not in {"ollama", "vllm"}:
+        raise ValueError(
+            "仅支持内网推理提供商: ollama 或 vllm，请检查 Router.default"
+        )
+
+    if not api_base_url:
         missing_fields = []
         if not api_base_url:
             missing_fields.append("api_base_url")
-        if not api_key:
-            missing_fields.append("api_key")
         raise ValueError(
-            "缺少 Azure 配置字段: "
+            "缺少配置字段: "
             + ", ".join(missing_fields)
             + "（Providers / Router.default）"
         )
+
+    if not model_name and isinstance(providers, list):
+        for provider in providers:
+            if isinstance(provider, dict) and provider.get("name") == provider_name:
+                models = provider.get("models", [])
+                if isinstance(models, list) and models:
+                    model_name = str(models[0]).strip()
+                break
+    if not model_name:
+        raise ValueError("未配置默认模型，请检查 Router.default 或 Providers.models")
 
     return LLMConfig(
         host=data.get("HOST", "127.0.0.1"),
@@ -61,8 +75,9 @@ def _load_config(config_path: str) -> LLMConfig:
         timeout_ms=int(data.get("API_TIMEOUT_MS", 600000)),
         default_provider=provider_name,
         default_model=model_name,
+        provider_kind=provider_name.lower(),
         api_base_url=api_base_url,
-        api_key=api_key,
+        api_key=api_key or provider_name,
     )
 
 
@@ -87,27 +102,6 @@ def _append_path(base_url: str, append_path: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
 
 
-def _build_response_urls(config: LLMConfig) -> List[str]:
-    base_url = config.api_base_url.strip()
-    if not base_url:
-        raise ValueError("api_base_url 为空")
-    parsed = urlparse(base_url)
-    path = parsed.path.rstrip("/")
-    urls = [_append_path(base_url, "responses")]
-    if not path.endswith("/v1"):
-        urls.append(_append_path(base_url, "v1/responses"))
-    if "/openai" not in path and not path.endswith("/v1"):
-        urls.append(_append_path(base_url, "openai/v1/responses"))
-    ordered: List[str] = []
-    seen = set()
-    for url in urls:
-        if url in seen:
-            continue
-        seen.add(url)
-        ordered.append(url)
-    return ordered
-
-
 def _build_chat_urls(config: LLMConfig) -> List[str]:
     base_url = config.api_base_url.strip()
     if not base_url:
@@ -117,8 +111,6 @@ def _build_chat_urls(config: LLMConfig) -> List[str]:
     urls = [_append_path(base_url, "chat/completions")]
     if not path.endswith("/v1"):
         urls.append(_append_path(base_url, "v1/chat/completions"))
-    if "/openai" not in path and not path.endswith("/v1"):
-        urls.append(_append_path(base_url, "openai/v1/chat/completions"))
     ordered: List[str] = []
     seen = set()
     for url in urls:
@@ -131,10 +123,11 @@ def _build_chat_urls(config: LLMConfig) -> List[str]:
 
 def _post_with_multi_fallback(config: LLMConfig, request_candidates: List[Tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
     headers = {
-        "api-key": config.api_key,
-        "Authorization": f"Bearer {config.api_key}",
         "Content-Type": "application/json",
     }
+    if config.api_key:
+        headers["api-key"] = config.api_key
+        headers["Authorization"] = f"Bearer {config.api_key}"
 
     last_resp: Optional[requests.Response] = None
     for url, payload in request_candidates:
@@ -156,37 +149,6 @@ def _post_with_multi_fallback(config: LLMConfig, request_candidates: List[Tuple[
     last_resp.raise_for_status()
     return last_resp.json()
 
-
-def _post_with_fallback(config: LLMConfig, payload: Dict[str, Any]) -> Dict[str, Any]:
-    return _post_with_multi_fallback(config, [(_append_path(config.api_base_url.strip(), "responses"), payload)])
-
-
-def _build_inference_payload(messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "model": "",
-        "input": messages,
-    }
-    if json_mode:
-        payload["text"] = {"format": {"type": "json_object"}}
-    return payload
-
-
-def _build_inference_payload_v1(messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "model": "",
-        "input": [
-            {
-                "role": msg["role"],
-                "content": [{"type": "input_text", "text": msg["content"]}],
-            }
-            for msg in messages
-        ],
-    }
-    if json_mode:
-        payload["text"] = {"format": {"type": "json_object"}}
-    return payload
-
-
 def _build_chat_completions_payload(messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "model": "",
@@ -198,17 +160,10 @@ def _build_chat_completions_payload(messages: List[Dict[str, str]], json_mode: b
 
 
 def _post_inference(config: LLMConfig, messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
-    payload = _build_inference_payload(messages, json_mode)
-    payload["model"] = config.default_model
-    payload_v1 = _build_inference_payload_v1(messages, json_mode)
-    payload_v1["model"] = config.default_model
     chat_payload = _build_chat_completions_payload(messages, json_mode)
     chat_payload["model"] = config.default_model
 
     request_candidates: List[Tuple[str, Dict[str, Any]]] = []
-    for url in _build_response_urls(config):
-        request_candidates.append((url, payload))
-        request_candidates.append((url, payload_v1))
     for url in _build_chat_urls(config):
         request_candidates.append((url, chat_payload))
 
