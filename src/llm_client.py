@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -65,54 +66,78 @@ def _load_config(config_path: str) -> LLMConfig:
     )
 
 
-def _build_request_url(config: LLMConfig) -> str:
+def _append_path(base_url: str, append_path: str) -> str:
+    parsed = urlparse(base_url)
+    base_path = parsed.path.rstrip("/")
+    target = append_path.strip("/")
+
+    if not base_path:
+        new_path = f"/{target}"
+    elif base_path.endswith(f"/{target}"):
+        new_path = base_path
+    elif base_path.endswith("/v1") and target.startswith("v1/"):
+        new_path = f"{base_path}/{target[len('v1/') :]}"
+    elif base_path.endswith("/openai") and target.startswith("openai/"):
+        new_path = f"{base_path}/{target[len('openai/') :]}"
+    elif base_path.endswith("/openai/v1") and target.startswith("openai/v1/"):
+        new_path = f"{base_path}/{target[len('openai/v1/') :]}"
+    else:
+        new_path = f"{base_path}/{target}"
+
+    return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _build_response_urls(config: LLMConfig) -> List[str]:
     base_url = config.api_base_url.strip()
     if not base_url:
         raise ValueError("api_base_url 为空")
-    if "/responses" in base_url:
-        return base_url
-    if base_url.endswith("/"):
-        return f"{base_url}responses"
-    return f"{base_url}/responses"
-
-
-def _build_fallback_request_url(config: LLMConfig) -> str:
-    base_url = config.api_base_url.strip()
-    if not base_url:
-        raise ValueError("api_base_url 为空")
-    if base_url.endswith("/openai"):
-        return f"{base_url}/v1/responses"
-    if "/openai/v1" not in base_url:
-        base_url = f"{base_url.rstrip('/')}/openai/v1"
-    return f"{base_url.rstrip('/')}/responses"
-
-
-def _build_alt_request_url(config: LLMConfig) -> str:
-    base_url = config.api_base_url.strip()
-    if not base_url:
-        raise ValueError("api_base_url 为空")
-    if base_url.endswith("/openai"):
-        return f"{base_url}/responses"
-    return _build_request_url(config)
-
-
-def _post_with_multi_fallback(config: LLMConfig, payload: Dict[str, Any]) -> Dict[str, Any]:
-    headers = {"api-key": config.api_key, "Content-Type": "application/json"}
-    urls = [
-        _build_request_url(config),
-        _build_fallback_request_url(config),
-        _build_alt_request_url(config),
-    ]
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    urls = [_append_path(base_url, "responses")]
+    if not path.endswith("/v1"):
+        urls.append(_append_path(base_url, "v1/responses"))
+    if "/openai" not in path and not path.endswith("/v1"):
+        urls.append(_append_path(base_url, "openai/v1/responses"))
+    ordered: List[str] = []
     seen = set()
-    ordered_urls = []
     for url in urls:
         if url in seen:
             continue
         seen.add(url)
-        ordered_urls.append(url)
+        ordered.append(url)
+    return ordered
+
+
+def _build_chat_urls(config: LLMConfig) -> List[str]:
+    base_url = config.api_base_url.strip()
+    if not base_url:
+        raise ValueError("api_base_url 为空")
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    urls = [_append_path(base_url, "chat/completions")]
+    if not path.endswith("/v1"):
+        urls.append(_append_path(base_url, "v1/chat/completions"))
+    if "/openai" not in path and not path.endswith("/v1"):
+        urls.append(_append_path(base_url, "openai/v1/chat/completions"))
+    ordered: List[str] = []
+    seen = set()
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+        ordered.append(url)
+    return ordered
+
+
+def _post_with_multi_fallback(config: LLMConfig, request_candidates: List[Tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    headers = {
+        "api-key": config.api_key,
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+    }
 
     last_resp: Optional[requests.Response] = None
-    for url in ordered_urls:
+    for url, payload in request_candidates:
         resp = requests.post(
             url,
             json=payload,
@@ -133,7 +158,7 @@ def _post_with_multi_fallback(config: LLMConfig, payload: Dict[str, Any]) -> Dic
 
 
 def _post_with_fallback(config: LLMConfig, payload: Dict[str, Any]) -> Dict[str, Any]:
-    return _post_with_multi_fallback(config, payload)
+    return _post_with_multi_fallback(config, [(_append_path(config.api_base_url.strip(), "responses"), payload)])
 
 
 def _build_inference_payload(messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
@@ -162,18 +187,32 @@ def _build_inference_payload_v1(messages: List[Dict[str, str]], json_mode: bool)
     return payload
 
 
+def _build_chat_completions_payload(messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "model": "",
+        "messages": messages,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    return payload
+
+
 def _post_inference(config: LLMConfig, messages: List[Dict[str, str]], json_mode: bool) -> Dict[str, Any]:
     payload = _build_inference_payload(messages, json_mode)
     payload["model"] = config.default_model
-
-    response = _post_with_fallback(config, payload)
-    if _extract_output_text(response):
-        return response
-
     payload_v1 = _build_inference_payload_v1(messages, json_mode)
     payload_v1["model"] = config.default_model
-    response = _post_with_fallback(config, payload_v1)
-    return response
+    chat_payload = _build_chat_completions_payload(messages, json_mode)
+    chat_payload["model"] = config.default_model
+
+    request_candidates: List[Tuple[str, Dict[str, Any]]] = []
+    for url in _build_response_urls(config):
+        request_candidates.append((url, payload))
+        request_candidates.append((url, payload_v1))
+    for url in _build_chat_urls(config):
+        request_candidates.append((url, chat_payload))
+
+    return _post_with_multi_fallback(config, request_candidates)
 
 
 def _post_inference_for_summary(config: LLMConfig, messages: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -223,6 +262,24 @@ def _extract_output_text(data: Dict[str, Any]) -> Optional[str]:
     fallback_text = _safe_get(data, "text")
     if isinstance(fallback_text, str) and fallback_text.strip():
         return fallback_text.strip()
+
+    choices = _safe_get(data, "choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message_content = _safe_get(choice, "message", "content")
+            if isinstance(message_content, str) and message_content.strip():
+                return message_content.strip()
+            if isinstance(message_content, list):
+                text_parts = []
+                for item in message_content:
+                    if isinstance(item, dict):
+                        text_value = item.get("text")
+                        if isinstance(text_value, str) and text_value.strip():
+                            text_parts.append(text_value.strip())
+                if text_parts:
+                    return "\n".join(text_parts)
     return None
 
 
