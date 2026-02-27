@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+import warnings
 
 import pandas as pd
 
@@ -38,7 +39,7 @@ def _detect_date_column(df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
     ratios: Dict[str, float] = {}
 
     for col in df.columns:
-        series = pd.to_datetime(df[col], errors="coerce")
+        series = _coerce_datetime(df[col])
         ratio = series.notna().mean() if len(series) else 0.0
         ratios[str(col)] = ratio
         if ratio > best_ratio:
@@ -46,6 +47,54 @@ def _detect_date_column(df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
             best_col = col
 
     return str(best_col), ratios
+
+
+def _coerce_datetime(series: pd.Series) -> pd.Series:
+    """将列尽可能稳定地转成时间，避免 pandas 在自动推断格式时反复告警。"""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce")
+
+    # 对纯数字列，优先按 Excel 序列日期尝试（1899-12-30 起算）
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().mean() > 0.8:
+        excel_dates = pd.to_datetime(
+            numeric,
+            errors="coerce",
+            unit="D",
+            origin="1899-12-30",
+        )
+        if excel_dates.notna().mean() > 0.8:
+            return excel_dates
+
+    text_series = series.astype(str).str.strip()
+    candidate_formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%Y-%m",
+        "%Y/%m",
+        "%Y%m%d",
+        "%Y%m",
+    ]
+
+    merged = pd.Series([pd.NaT] * len(series), index=series.index)
+    for fmt in candidate_formats:
+        parsed = pd.to_datetime(text_series, format=fmt, errors="coerce")
+        merged = merged.where(merged.notna(), parsed)
+
+    best = pd.to_datetime(merged, errors="coerce")
+    best_ratio = best.notna().mean() if len(best) else 0.0
+
+    # 兜底：保持兼容性，同时屏蔽 pandas 的格式推断告警。
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Could not infer format",
+            category=UserWarning,
+        )
+        fallback = pd.to_datetime(text_series, errors="coerce")
+    fallback_ratio = fallback.notna().mean() if len(fallback) else 0.0
+    return fallback if fallback_ratio > best_ratio else best
 
 
 def _normalize_column_name(name: str) -> str:
@@ -126,7 +175,7 @@ def load_excel(
     df = xls.parse(sheet_name)
 
     date_col, ratios = _detect_date_column(df)
-    date_series = pd.to_datetime(df[date_col], errors="coerce")
+    date_series = _coerce_datetime(df[date_col])
     df = df.assign(**{date_col: date_series})
 
     numeric_cols: List[str] = []
@@ -177,7 +226,7 @@ def load_excel(
             llm_numeric = llm_result.get("numeric_columns")
             if isinstance(llm_date, str) and llm_date in df.columns:
                 date_col = llm_date
-                df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+                df[date_col] = _coerce_datetime(df[date_col])
             if isinstance(llm_numeric, list) and len(llm_numeric) > 0:
                 numeric_cols = []
                 column_display_names = {}

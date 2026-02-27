@@ -1,23 +1,21 @@
 {
   "LOG": true,
   "HOST": "127.0.0.1",
-  "PORT": 3456,
+  "PORT": 11434,
   "API_TIMEOUT_MS": 600000,
   "Providers": [
     {
-      "name": "azure",
-      "api_base_url": "https://YOUR-AZURE-REGION.openai.azure.com/openai/v1",
-      "api_key": "YOUR_AZURE_OPENAI_API_KEY",
-      "models": ["gpt-5.2-chat"],
-      "transformer": { "use": ["openai-responses"] }
+      "name": "ollama",
+      "api_base_url": "http://127.0.0.1:11434/v1",
+      "api_key": "ollama",
+      "models": ["qwen2.5:14b"]
     },
     {
-      "name": "vertex-gemini",
-      "api_base_url": "https://us-central1-aiplatform.googleapis.com",
-      "api_key": "YOUR_GOOGLE_CLOUD_OR_OAUTH_TOKEN",
-      "models": ["gemini-2.0-flash"],
-      "transformer": { "use": ["vertex-gemini"] }
+      "name": "vllm",
+      "api_base_url": "http://127.0.0.1:8000/v1",
+      "api_key": "vllm",
+      "models": ["Qwen/Qwen2.5-14B-Instruct"]
     }
   ],
-  "Router": { "default": "azure,gpt-5.2-chat" }
+  "Router": { "default": "ollama,qwen2.5:14b" }
 }
