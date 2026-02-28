@@ -79,6 +79,28 @@ class MatchResponse(BaseModel):
     candidates: Optional[List[MatchCandidatesItem]] = None
 
 
+class ContextEngineeringItem(BaseModel):
+    name: str
+    enabled_by_default: bool
+    where_to_change: str
+    description: str
+
+
+class ConfigOptionItem(BaseModel):
+    key: str
+    source: str
+    default_value: str
+    where_to_change: str
+    description: str
+
+
+class RuntimeOptionsResponse(BaseModel):
+    config_path: str
+    output_dir: str
+    context_engineering_options: List[ContextEngineeringItem]
+    config_options: List[ConfigOptionItem]
+
+
 app = FastAPI(title="Data Analysis Agent")
 
 CONFIG_PATH = get_config_path()
@@ -248,4 +270,74 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         indicator_names=display_names,
         sheet_name=parsed_excel.sheet_name,
         date_column=date_col,
+    )
+
+
+@app.get("/health")
+async def health() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/meta/options", response_model=RuntimeOptionsResponse)
+async def meta_options() -> RuntimeOptionsResponse:
+    return RuntimeOptionsResponse(
+        config_path=get_config_path(),
+        output_dir=get_output_dir(),
+        context_engineering_options=[
+            ContextEngineeringItem(
+                name="LLM 表结构识别(use_llm_structure)",
+                enabled_by_default=True,
+                where_to_change="WebUI 复选框 / AnalyzeRequest.use_llm_structure",
+                description="开启时由 LLM 识别日期列与指标列，关闭则回退启发式规则。",
+            ),
+            ContextEngineeringItem(
+                name="指标歧义澄清(/analyze/match)",
+                enabled_by_default=True,
+                where_to_change="先调用 /analyze/match，再将选中指标传给 /analyze",
+                description="当用户描述不精确时，返回候选指标列表让用户二次确认。",
+            ),
+            ContextEngineeringItem(
+                name="时间窗口解析(parse_prompt + resolve_window)",
+                enabled_by_default=True,
+                where_to_change="用户提示词或 AnalyzeRequest.time_window",
+                description="支持'最近一年'等相对时间与绝对时间区间解析。",
+            ),
+        ],
+        config_options=[
+            ConfigOptionItem(
+                key="DATA_ANALYSIS_CONFIG_PATH",
+                source="环境变量",
+                default_value="api/config.azure.json",
+                where_to_change="启动前设置环境变量",
+                description="覆盖 LLM 推理配置文件路径。",
+            ),
+            ConfigOptionItem(
+                key="DATA_ANALYSIS_OUTPUT_DIR",
+                source="环境变量",
+                default_value="data/reports",
+                where_to_change="启动前设置环境变量",
+                description="覆盖报告 docx 输出目录。",
+            ),
+            ConfigOptionItem(
+                key="API_TIMEOUT_MS",
+                source="api/config.azure.json",
+                default_value="600000",
+                where_to_change="api/config.azure.json",
+                description="LLM 请求超时（毫秒）。",
+            ),
+            ConfigOptionItem(
+                key="Router.default",
+                source="api/config.azure.json",
+                default_value="ollama,<model>",
+                where_to_change="api/config.azure.json",
+                description="选择默认 provider 与 model。",
+            ),
+            ConfigOptionItem(
+                key="Providers[].api_base_url",
+                source="api/config.azure.json",
+                default_value="http://127.0.0.1:11434/v1",
+                where_to_change="api/config.azure.json",
+                description="内网模型服务 OpenAI 兼容入口地址。",
+            ),
+        ],
     )
