@@ -22,13 +22,14 @@ import requests
 
 from src.analysis import resolve_window
 from src.excel_parser import load_excel
-from src.file_ingest import parse_uploads
+from src.file_ingest import build_raw_file_context_section, parse_uploads
 from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metrics
 from src.llm_client import (
     generate_conversation_summary,
     match_indicators_similarity,
     parse_prompt,
     revise_summary,
+    get_raw_file_context_limit_chars,
 )
 from src.docx_chart import inject_editable_charts
 from src.report_docx import (
@@ -72,6 +73,7 @@ class SessionState:
     pending_time_window: Optional[Dict[str, str]] = None
     selected_indicators: Optional[List[str]] = None
     context_text: str = ""
+    raw_file_context_section: str = ""
     # 多轮对话共用的报告：路径与累计图表数据，用于追加到同一 docx
     session_report_path: Optional[str] = None
     session_chart_data: Optional[List] = None
@@ -86,6 +88,8 @@ def _update_state_with_uploads(state: SessionState, uploads) -> SessionState:
         state.parsed_excel = None
     if context_text:
         state.context_text = context_text
+        limit_chars = get_raw_file_context_limit_chars(CONFIG_PATH)
+        state.raw_file_context_section = build_raw_file_context_section(context_text, limit_chars)
     return state
 
 
@@ -102,12 +106,18 @@ def _load_parsed_excel(state: SessionState, sheet_name: Optional[str], use_llm: 
     return state.parsed_excel
 
 
-def _combine_prompt(prompt: str, context_text: str) -> str:
+def _combine_prompt(prompt: str, context_text: str, raw_file_context_section: str) -> str:
     prompt = (prompt or "").strip()
+    parts: List[str] = []
+    if prompt:
+        parts.append(prompt)
     if context_text:
-        return f"{prompt}\n\n补充资料:\n{context_text}" if prompt else context_text
-    return prompt
-
+        parts.append(f"补充资料:\n{context_text}")
+    parts.append(
+        "原始文件信息（超过模型上下文限制时留空）:\n"
+        + (raw_file_context_section or "").strip()
+    )
+    return "\n\n".join(parts).strip()
 
 def _resolve_time_window(
     prompt: str,
@@ -335,7 +345,7 @@ def handle_message(
     use_message_for_summary_revision: bool,
 ) -> Tuple[ChatHistory, SessionState, str, Optional[str], Any]:
     state = _update_state_with_uploads(state, uploads)
-    combined_prompt = _combine_prompt(message, state.context_text)
+    combined_prompt = _combine_prompt(message, state.context_text, state.raw_file_context_section)
     hist = _normalize_chat_history(history)
 
     def _box_from_hist(new_hist: ChatHistory):

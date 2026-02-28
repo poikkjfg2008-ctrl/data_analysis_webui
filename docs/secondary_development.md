@@ -25,6 +25,44 @@
 
 - `DATA_ANALYSIS_OUTPUT_DIR=/your/output/dir`
 
+
+### 2.3 原始文件信息上下文阈值（新增）
+
+系统会将上传文档（TXT/DOCX）的原文作为“原始文件信息”候选上下文：
+
+- `len(raw_text) <= limit_chars`：将原文注入该上下文段。
+- `len(raw_text) > limit_chars`：该上下文段置空。
+
+阈值 `limit_chars` 计算优先级：
+
+1. `RAW_FILE_CONTEXT_LIMIT_CHARS`（手动绝对值，优先）
+2. `MODEL_CONTEXT_WINDOW_CHARS * RAW_FILE_CONTEXT_RATIO`（自动）
+3. 未配置时默认 `12000`
+
+另外也支持 provider 级配置：
+
+- `Providers[i].context_window_chars`
+- `Providers[i].model_context_window_chars["模型名"]`
+
+示例：
+
+```json
+{
+  "MODEL_CONTEXT_WINDOW_CHARS": 128000,
+  "RAW_FILE_CONTEXT_RATIO": 0.35,
+  "Providers": [
+    {
+      "name": "vllm",
+      "context_window_chars": 128000,
+      "model_context_window_chars": {
+        "Qwen/Qwen2.5-14B-Instruct": 128000
+      }
+    }
+  ]
+}
+```
+
+
 ## 3. 接入 Ollama
 
 1) 启动服务

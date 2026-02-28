@@ -16,6 +16,7 @@ class LLMConfig:
     provider_kind: str
     api_base_url: str
     api_key: str
+    raw_file_context_limit_chars: int
 
 
 def _load_config(config_path: str) -> LLMConfig:
@@ -69,6 +70,8 @@ def _load_config(config_path: str) -> LLMConfig:
     if not model_name:
         raise ValueError("未配置默认模型，请检查 Router.default 或 Providers.models")
 
+    raw_file_context_limit_chars = _resolve_raw_file_context_limit_chars(data, provider_name, model_name)
+
     return LLMConfig(
         host=data.get("HOST", "127.0.0.1"),
         port=int(data.get("PORT", 0)),
@@ -78,7 +81,43 @@ def _load_config(config_path: str) -> LLMConfig:
         provider_kind=provider_name.lower(),
         api_base_url=api_base_url,
         api_key=api_key or provider_name,
+        raw_file_context_limit_chars=raw_file_context_limit_chars,
     )
+
+
+def _resolve_raw_file_context_limit_chars(data: Dict[str, Any], provider_name: str, model_name: str) -> int:
+    """计算「原始文件信息上下文」可注入的字符上限。
+    优先级：
+    1) RAW_FILE_CONTEXT_LIMIT_CHARS（手动绝对值）
+    2) MODEL_CONTEXT_WINDOW_CHARS * RAW_FILE_CONTEXT_RATIO（自动）
+    3) 兜底默认值 12000
+    """
+    manual_limit = int(data.get("RAW_FILE_CONTEXT_LIMIT_CHARS", 0) or 0)
+    if manual_limit > 0:
+        return manual_limit
+
+    auto_window_chars = int(data.get("MODEL_CONTEXT_WINDOW_CHARS", 0) or 0)
+    ratio = float(data.get("RAW_FILE_CONTEXT_RATIO", 0.35) or 0.35)
+
+    providers = data.get("Providers", [])
+    if isinstance(providers, list):
+        for provider in providers:
+            if not isinstance(provider, dict) or provider.get("name") != provider_name:
+                continue
+            if auto_window_chars <= 0:
+                auto_window_chars = int(provider.get("context_window_chars", 0) or 0)
+            model_windows = provider.get("model_context_window_chars")
+            if auto_window_chars <= 0 and isinstance(model_windows, dict):
+                auto_window_chars = int(model_windows.get(model_name, 0) or 0)
+            break
+
+    if auto_window_chars <= 0:
+        return 12000
+    return max(1000, int(auto_window_chars * ratio))
+
+
+def get_raw_file_context_limit_chars(config_path: str) -> int:
+    return _load_config(config_path).raw_file_context_limit_chars
 
 
 def _append_path(base_url: str, append_path: str) -> str:
