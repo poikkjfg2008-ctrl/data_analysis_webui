@@ -4,10 +4,13 @@
 
 ## 1. 项目结构总览
 
-- `src/gradio_app.py`：Gradio WebUI 入口。
-- `src/main.py`：FastAPI 接口入口。
+- `src/gradio_app.py`：Gradio WebUI 入口（多轮对话、报告预览、总结修订）。
+- `src/main.py`：FastAPI 接口入口（`/health`、`/meta/options`、`/analyze/match`、`/analyze`）。
 - `src/excel_parser.py`：Excel 读取与结构识别（日期列、数值列、单位）。
+- `src/indicator_resolver.py`：指标名与列名的映射、歧义消解。
+- `src/analysis.py`：时间窗口解析。
 - `src/llm_client.py`：统一 LLM 调用层（仅 Ollama/vLLM）。
+- `src/report_docx.py`：报告生成与追加。
 - `src/settings.py`：配置路径与报告输出目录管理。
 - `api/config.azure.json`：LLM 配置文件（本地文件，不入库）。
 
@@ -25,7 +28,28 @@
 
 - `DATA_ANALYSIS_OUTPUT_DIR=/your/output/dir`
 
-## 3. 接入 Ollama
+### 2.3 WebUI 端口
+
+默认端口 5600，可通过环境变量覆盖：
+
+- `GRADIO_SERVER_PORT=5601`
+
+## 3. API 端口与端点
+
+启动：
+
+```bash
+uvicorn src.main:app --host 0.0.0.0 --port 8000
+```
+
+端点：
+
+- `GET /health`：健康检查
+- `GET /meta/options`：返回可调上下文工程项与配置项
+- `POST /analyze/match`：分析前指标候选匹配
+- `POST /analyze`：执行分析与报告生成
+
+## 4. 接入 Ollama
 
 1) 启动服务
 
@@ -56,7 +80,7 @@ ollama pull qwen2.5:14b
 }
 ```
 
-## 4. 接入 vLLM
+## 5. 接入 vLLM
 
 1) 启动 vLLM OpenAI 接口（示例）
 
@@ -81,7 +105,7 @@ python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-14B-Instruct -
 }
 ```
 
-## 5. 常见问题
+## 6. 常见问题
 
 - 404：请检查 `api_base_url` 是否是服务真实路径（通常要包含 `/v1`）。
 - 超时：增大 `API_TIMEOUT_MS`，或使用更小模型。
