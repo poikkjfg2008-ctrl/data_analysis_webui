@@ -79,9 +79,106 @@ class MatchResponse(BaseModel):
     candidates: Optional[List[MatchCandidatesItem]] = None
 
 
+class ContextOptionItem(BaseModel):
+    key: str
+    description: str
+    source: str
+
+
+class ConfigOptionItem(BaseModel):
+    key: str
+    description: str
+    location: str
+
+
+class RuntimeConfigResponse(BaseModel):
+    config_path: str
+    output_dir: str
+    context_options: List[ContextOptionItem]
+    config_options: List[ConfigOptionItem]
+
+
 app = FastAPI(title="Data Analysis Agent")
 
 CONFIG_PATH = get_config_path()
+
+
+@app.get("/healthz")
+async def healthz() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/config/runtime", response_model=RuntimeConfigResponse)
+async def config_runtime() -> RuntimeConfigResponse:
+    """返回运行时配置与可调参数清单，便于前端/运维页面动态展示。"""
+    return RuntimeConfigResponse(
+        config_path=CONFIG_PATH,
+        output_dir=get_output_dir(),
+        context_options=[
+            ContextOptionItem(
+                key="RAW_FILE_CONTEXT_LIMIT_CHARS",
+                description="原始文档注入上下文的绝对字符上限（最高优先级）",
+                source="api/config.azure.json",
+            ),
+            ContextOptionItem(
+                key="RAW_FILE_CONTEXT_RATIO",
+                description="按模型上下文窗口比例计算原始文档注入阈值",
+                source="api/config.azure.json",
+            ),
+            ContextOptionItem(
+                key="MODEL_CONTEXT_WINDOW_CHARS",
+                description="模型上下文窗口大小（用于自动阈值计算）",
+                source="api/config.azure.json",
+            ),
+            ContextOptionItem(
+                key="use_llm_structure",
+                description="是否使用 LLM 自动识别 Excel 日期列与指标列",
+                source="API 请求参数 /analyze",
+            ),
+            ContextOptionItem(
+                key="sheet_name",
+                description="指定工作表，避免多 sheet 时自动识别偏差",
+                source="API 请求参数 /analyze",
+            ),
+            ContextOptionItem(
+                key="time_window",
+                description="从用户需求中解析时间窗口（相对时间或绝对日期区间）",
+                source="用户提示词解析",
+            ),
+        ],
+        config_options=[
+            ConfigOptionItem(
+                key="DATA_ANALYSIS_CONFIG_PATH",
+                description="覆盖默认配置文件路径 api/config.azure.json",
+                location="环境变量",
+            ),
+            ConfigOptionItem(
+                key="DATA_ANALYSIS_OUTPUT_DIR",
+                description="覆盖报告输出目录 data/reports",
+                location="环境变量",
+            ),
+            ConfigOptionItem(
+                key="API_TIMEOUT_MS",
+                description="调用模型服务的超时毫秒数",
+                location="api/config.azure.json",
+            ),
+            ConfigOptionItem(
+                key="Providers[].api_base_url",
+                description="模型服务地址（OpenAI 兼容 /v1）",
+                location="api/config.azure.json",
+            ),
+            ConfigOptionItem(
+                key="Providers[].models",
+                description="可用模型列表",
+                location="api/config.azure.json",
+            ),
+            ConfigOptionItem(
+                key="Router.default",
+                description="默认路由 provider,model",
+                location="api/config.azure.json",
+            ),
+        ],
+    )
 
 
 @app.post("/analyze/match", response_model=MatchResponse)
