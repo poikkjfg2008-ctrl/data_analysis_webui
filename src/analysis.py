@@ -51,6 +51,12 @@ def _parse_relative_window(text: str) -> Optional[Tuple[timedelta, str]]:
         if digits:
             days = int(digits)
             return timedelta(days=days), f"最近{days}天"
+    # 半导体烤机/电测语义：很多场景按样本批次而非自然日表达分析窗口。
+    if "最近" in text and any(token in text for token in ("片", "点", "样本", "批", "wafer", "lot")):
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if digits:
+            points = int(digits)
+            return timedelta(days=points), f"最近{points}个样本"
     return None
 
 
@@ -99,6 +105,13 @@ def compute_stats(series: pd.Series) -> Dict[str, float]:
             "end": math.nan,
             "abs_change": math.nan,
             "pct_change": math.nan,
+            "median": math.nan,
+            "std": math.nan,
+            "p5": math.nan,
+            "p95": math.nan,
+            "cv": math.nan,
+            "outlier_ratio": math.nan,
+            "drift_slope": math.nan,
         }
     start_val = series.iloc[0]
     end_val = series.iloc[-1]
@@ -107,6 +120,36 @@ def compute_stats(series: pd.Series) -> Dict[str, float]:
         pct_change = math.nan
     else:
         pct_change = abs_change / start_val
+
+    median = float(series.median())
+    std = float(series.std(ddof=1)) if len(series) > 1 else 0.0
+    p5 = float(series.quantile(0.05))
+    p95 = float(series.quantile(0.95))
+    cv = math.nan if abs(float(series.mean())) < 1e-12 else std / float(series.mean())
+
+    q1 = float(series.quantile(0.25))
+    q3 = float(series.quantile(0.75))
+    iqr = q3 - q1
+    if iqr <= 0:
+        outlier_ratio = 0.0
+    else:
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        outlier_ratio = float(((series < lower) | (series > upper)).mean())
+
+    if len(series) > 1:
+        x = pd.Series(range(len(series)), dtype="float64")
+        x_mean = float(x.mean())
+        y = series.astype("float64")
+        y_mean = float(y.mean())
+        denom = float(((x - x_mean) ** 2).sum())
+        if denom == 0:
+            drift_slope = 0.0
+        else:
+            drift_slope = float(((x - x_mean) * (y - y_mean)).sum() / denom)
+    else:
+        drift_slope = 0.0
+
     return {
         "count": int(series.count()),
         "mean": float(series.mean()),
@@ -116,6 +159,13 @@ def compute_stats(series: pd.Series) -> Dict[str, float]:
         "end": float(end_val),
         "abs_change": float(abs_change),
         "pct_change": float(pct_change) if pct_change is not math.nan else math.nan,
+        "median": median,
+        "std": std,
+        "p5": p5,
+        "p95": p95,
+        "cv": float(cv) if cv is not math.nan else math.nan,
+        "outlier_ratio": outlier_ratio,
+        "drift_slope": drift_slope,
     }
 
 

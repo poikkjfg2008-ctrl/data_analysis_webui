@@ -27,6 +27,13 @@ STAT_LABELS: Dict[str, str] = {
     "end": "期末 (end)",
     "abs_change": "绝对变化 (abs_change)",
     "pct_change": "变化率 (pct_change)",
+    "median": "中位数 (median)",
+    "std": "标准差 (std)",
+    "p5": "P5分位数 (p5)",
+    "p95": "P95分位数 (p95)",
+    "cv": "变异系数 (cv)",
+    "outlier_ratio": "离群点占比 (outlier_ratio)",
+    "drift_slope": "漂移斜率 (drift_slope)",
 }
 
 # 报告字体：英文 Times New Roman，汉字 宋体
