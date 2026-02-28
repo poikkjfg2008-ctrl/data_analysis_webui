@@ -87,6 +87,31 @@ vLLM 示例：
 }
 ```
 
+
+#### 原始文件信息上下文机制（新增）
+
+当上传 Word/TXT 等文档资料时，系统会额外构造一个“原始文件信息”上下文段：
+
+- 若文档原文字符数 **不超过** 阈值：将原始文本段落直接注入该上下文段供模型参考。
+- 若字符数 **超过** 阈值：该上下文段置空（避免挤占模型主任务上下文）。
+
+阈值支持两种方式：
+
+1. 自动模式：`MODEL_CONTEXT_WINDOW_CHARS * RAW_FILE_CONTEXT_RATIO`（默认比例 `0.35`）
+2. 手动模式：`RAW_FILE_CONTEXT_LIMIT_CHARS`（优先级最高）
+
+可选配置示例：
+
+```json
+{
+  "MODEL_CONTEXT_WINDOW_CHARS": 128000,
+  "RAW_FILE_CONTEXT_RATIO": 0.35,
+  "RAW_FILE_CONTEXT_LIMIT_CHARS": 20000
+}
+```
+
+> 说明：当同时配置自动与手动阈值时，以 `RAW_FILE_CONTEXT_LIMIT_CHARS` 为准。
+
 ### 环境变量覆盖
 
 - `DATA_ANALYSIS_CONFIG_PATH`：覆盖 LLM 配置文件路径（默认 `api/config.azure.json`）

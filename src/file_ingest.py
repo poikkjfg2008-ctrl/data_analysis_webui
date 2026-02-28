@@ -67,3 +67,16 @@ def parse_uploads(uploaded) -> Tuple[Optional[str], str]:
 
     context_text = "\n\n".join(context_parts).strip()
     return excel_path, context_text
+
+
+def build_raw_file_context_section(context_text: str, limit_chars: int) -> str:
+    """构建用于注入 LLM 的「原始文件信息」上下文段。
+
+    规则：
+    - 文档原文长度 <= limit_chars：直接注入原始段落。
+    - 文档原文长度 > limit_chars：该段落置空。
+    """
+    content = (context_text or "").strip()
+    if not content or limit_chars <= 0 or len(content) > limit_chars:
+        return ""
+    return content

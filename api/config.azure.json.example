@@ -3,18 +3,26 @@
   "HOST": "127.0.0.1",
   "PORT": 11434,
   "API_TIMEOUT_MS": 600000,
+  "MODEL_CONTEXT_WINDOW_CHARS": 128000,
+  "RAW_FILE_CONTEXT_RATIO": 0.35,
+  "RAW_FILE_CONTEXT_LIMIT_CHARS": 0,
   "Providers": [
     {
       "name": "ollama",
       "api_base_url": "http://127.0.0.1:11434/v1",
       "api_key": "ollama",
-      "models": ["qwen2.5:14b"]
+      "models": ["qwen2.5:14b"],
+      "context_window_chars": 128000
     },
     {
       "name": "vllm",
       "api_base_url": "http://127.0.0.1:8000/v1",
       "api_key": "vllm",
-      "models": ["Qwen/Qwen2.5-14B-Instruct"]
+      "models": ["Qwen/Qwen2.5-14B-Instruct"],
+      "context_window_chars": 128000,
+      "model_context_window_chars": {
+        "Qwen/Qwen2.5-14B-Instruct": 128000
+      }
     }
   ],
   "Router": { "default": "ollama,qwen2.5:14b" }
