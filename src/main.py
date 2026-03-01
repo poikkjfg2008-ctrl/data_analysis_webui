@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Form, HTTPException
 from pydantic import BaseModel, Field
 
 from src.analysis import resolve_window
@@ -183,10 +183,10 @@ async def config_runtime() -> RuntimeConfigResponse:
 
 @app.post("/analyze/match", response_model=MatchResponse)
 async def analyze_match(
-    excel_path: str = "D:/codes/data_analysis/data/test.xlsx",
-    user_prompt: str = "",
-    sheet_name: Optional[str] = None,
-    use_llm_structure: bool = True,
+    excel_path: str = Form(default="D:/codes/data_analysis/data/test.xlsx"),
+    user_prompt: str = Form(default=""),
+    sheet_name: Optional[str] = Form(default=None),
+    use_llm_structure: bool = Form(default=True),
 ) -> MatchResponse:
     """根据用户描述做指标相似匹配；若歧义则返回候选列表供前端展示、用户选择后再调 /analyze 并传 selected_indicator_names。"""
     if not user_prompt.strip():
