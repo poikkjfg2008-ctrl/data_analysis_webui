@@ -22,7 +22,7 @@ def post_match(
     data = {
         "excel_path": excel_path,
         "user_prompt": user_prompt,
-        "use_llm_structure": str(use_llm_structure).lower(),
+        "use_llm_structure": use_llm_structure,
     }
     if sheet_name:
         data["sheet_name"] = sheet_name
