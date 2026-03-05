@@ -1,0 +1,44 @@
+{
+  "name": "data-analysis-report",
+  "version": "2.0.0",
+  "description": "Generate comprehensive data analysis reports from Excel files using LLM-powered insights",
+  "author": "data-analysis-webui",
+  "license": "MIT",
+  "date": "March 2025",
+  "organization": "Data Analysis WebUI Project",
+  "abstract": "Automatically analyze Excel data and generate comprehensive Word reports with charts, statistics, and AI-powered insights. Supports offline deployment with Ollama/vLLM models. Features automatic Excel structure detection, natural language time window parsing, metric disambiguation, statistical analysis (trends, percentiles, outliers, correlations), and professional Word document generation with time-series charts and AI-written insights.",
+  "capabilities": [
+    "Excel file parsing with automatic date and metric column detection",
+    "Natural language request processing using LLM",
+    "Metric disambiguation for similar column names",
+    "Time window resolution (relative and absolute dates)",
+    "Statistical analysis (mean, min, max, median, std, percentiles, outliers, drift)",
+    "Time-series chart generation with trend lines",
+    "AI-powered insights and recommendations",
+    "Professional Word document report generation",
+    "Multi-round conversation support via WebUI",
+    "Offline operation with Ollama/vLLM models"
+  ],
+  "triggers": [
+    "analyze Excel data",
+    "generate analysis report",
+    "analyze trends in data",
+    "compare metrics",
+    "create statistical report",
+    "Excel 分析",
+    "生成数据分析报告",
+    "分析数据趋势",
+    "对比指标"
+  ],
+  "requirements": [
+    "Python 3.9+",
+    "Ollama or vLLM service (for LLM capabilities)",
+    "FastAPI server running on configured port",
+    "Excel file with date column and numeric metrics"
+  ],
+  "references": [
+    "https://github.com/anthropics/claude-code",
+    "https://ollama.com/docs",
+    "https://fastapi.tiangolo.com/"
+  ]
+}

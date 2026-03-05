@@ -183,7 +183,7 @@ match_resp = requests.post(
         "excel_path": "/path/to/data.xlsx",
         "user_prompt": "分析最近一年产量趋势",
         "sheet_name": "Sheet1",
-        "use_llm_structure": "true",
+        "use_llm_structure": True,
     },
     timeout=60,
 )
