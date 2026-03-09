@@ -12,6 +12,7 @@ from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metr
 from src.llm_client import match_indicators_similarity, parse_prompt
 from src.report_docx import build_report
 from src.settings import get_config_path, get_output_dir
+from src.table_preprocess import parse_table_columns
 
 
 def _indicator_phrases_from_prompt(user_prompt: str) -> List[str]:
@@ -68,6 +69,18 @@ class AnalyzeResponse(BaseModel):
     date_column: str
     analysis_mode: str
     agent_message: str
+
+
+class PreprocessRequest(BaseModel):
+    file_path: str = Field(..., min_length=1)
+    threshold: int = Field(default=10, ge=1)
+    sheet_name: Optional[str] = None
+
+
+class PreprocessResponse(BaseModel):
+    location_columns: List[str]
+    value_columns: List[str]
+    threshold: int
 
 
 def _build_agent_message(
@@ -173,6 +186,11 @@ async def config_runtime() -> RuntimeConfigResponse:
                 description="声明当前数据是否包含时间列，false 时按样本序号进行无时间列分析",
                 source="API 请求参数 /analyze",
             ),
+            ContextOptionItem(
+                key="threshold",
+                description="表格通用预处理节点中定位列/数值列候选的唯一值阈值",
+                source="API 请求参数 /preprocess/table_columns",
+            ),
         ],
         config_options=[
             ConfigOptionItem(
@@ -206,6 +224,25 @@ async def config_runtime() -> RuntimeConfigResponse:
                 location="api/config.azure.json",
             ),
         ],
+    )
+
+
+@app.post("/preprocess/table_columns", response_model=PreprocessResponse)
+async def preprocess_table_columns(request: PreprocessRequest) -> PreprocessResponse:
+    """通用表格预处理节点：按唯一值阈值输出定位列与数值列候选。"""
+    try:
+        location_columns, value_columns = parse_table_columns(
+            request.file_path,
+            threshold=request.threshold,
+            sheet_name=request.sheet_name,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"表格预处理失败: {exc}")
+
+    return PreprocessResponse(
+        location_columns=location_columns,
+        value_columns=value_columns,
+        threshold=request.threshold,
     )
 
 
