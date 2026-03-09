@@ -112,6 +112,7 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001
 
 - `GET /healthz`
 - `GET /config/runtime`
+- `POST /analyze/preprocess`
 - `POST /analyze/match`
 - `POST /analyze`
 
@@ -121,6 +122,15 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001
 import requests
 
 base = "http://127.0.0.1:8001"
+
+# 0) 通用预处理（定位列 / 数值列候选）
+preprocess_resp = requests.post(
+    f"{base}/analyze/preprocess",
+    json={"file_path": "/path/to/data.xlsx", "threshold": 10},
+    timeout=60,
+)
+preprocess_resp.raise_for_status()
+preprocess_data = preprocess_resp.json()
 
 m = requests.post(
     f"{base}/analyze/match",

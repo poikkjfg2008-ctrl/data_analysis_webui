@@ -12,6 +12,7 @@ from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metr
 from src.llm_client import match_indicators_similarity, parse_prompt
 from src.report_docx import build_report
 from src.settings import get_config_path, get_output_dir
+from src.table_preprocess import parse_table_columns
 
 
 def _indicator_phrases_from_prompt(user_prompt: str) -> List[str]:
@@ -119,6 +120,17 @@ class RuntimeConfigResponse(BaseModel):
     output_dir: str
     context_options: List[ContextOptionItem]
     config_options: List[ConfigOptionItem]
+
+
+class PreprocessRequest(BaseModel):
+    file_path: str = Field(..., description="表格路径，支持 csv/xlsx/xls")
+    sheet_name: Optional[str] = None
+    threshold: int = Field(default=10, ge=1, description="唯一值阈值，小于等于该值判定为定位列")
+
+
+class PreprocessResponse(BaseModel):
+    location_columns: List[str]
+    value_columns: List[str]
 
 
 app = FastAPI(title="Data Analysis Agent")
@@ -392,3 +404,17 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         analysis_mode=analysis_mode,
         agent_message=agent_message,
     )
+
+
+@app.post("/analyze/preprocess", response_model=PreprocessResponse)
+async def analyze_preprocess(request: PreprocessRequest) -> PreprocessResponse:
+    """通用表格预处理节点：先按唯一值做定位/数值候选拆分，供分析链路复用。"""
+    try:
+        low_cols, high_cols = parse_table_columns(
+            file_path=request.file_path,
+            threshold=request.threshold,
+            sheet_name=request.sheet_name,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"表格预处理失败: {exc}")
+    return PreprocessResponse(location_columns=low_cols, value_columns=high_cols)

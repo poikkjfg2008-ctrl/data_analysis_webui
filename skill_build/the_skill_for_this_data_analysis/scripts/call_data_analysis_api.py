@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,23 @@ def post_analyze(
     return resp.json()
 
 
+def post_preprocess(
+    base_url: str,
+    file_path: str,
+    sheet_name: str | None,
+    timeout: int,
+    threshold: int = 10,
+) -> dict[str, Any]:
+    """Call /analyze/preprocess endpoint to classify location/value columns."""
+    log("🧩 Preprocessing table columns...")
+    payload: dict[str, Any] = {"file_path": file_path, "threshold": threshold}
+    if sheet_name:
+        payload["sheet_name"] = sheet_name
+    resp = requests.post(f"{base_url}/analyze/preprocess", json=payload, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def healthz(base_url: str, timeout: int) -> dict[str, Any]:
     """Check if API service is healthy"""
     log("💓 Checking service health...")
@@ -140,8 +158,11 @@ Output:
 
     parser.add_argument(
         "--base-url",
-        default="http://127.0.0.1:8001",
-        help="API base URL (default: http://127.0.0.1:8001)"
+        default=(
+            f"http://{os.environ.get('DATA_ANALYSIS_API_HOST', '127.0.0.1')}:"
+            f"{os.environ.get('DATA_ANALYSIS_API_PORT', '8001')}"
+        ),
+        help="API base URL (default from DATA_ANALYSIS_API_HOST/PORT, fallback: http://127.0.0.1:8001)",
     )
 
     parser.add_argument(
@@ -243,6 +264,21 @@ def main() -> int:
         # Phase 1: Health check
         output["healthz"] = healthz(args.base_url, args.timeout)
         log("✓ Health check passed")
+        log("")
+
+        # Phase 1.5: Table preprocessing (location/value split)
+        output["preprocess"] = post_preprocess(
+            base_url=args.base_url,
+            file_path=args.excel_path,
+            sheet_name=args.sheet_name,
+            timeout=args.timeout,
+            threshold=10,
+        )
+        log(
+            "✓ Preprocess done: "
+            f"location={len(output['preprocess'].get('location_columns', []))}, "
+            f"value={len(output['preprocess'].get('value_columns', []))}"
+        )
         log("")
 
         # Phase 2: Match indicators (skip if manually specified)
@@ -348,8 +384,8 @@ def main() -> int:
         log("  - Invalid base URL")
         log("")
         log("Try:")
-        log("  1. Check if service is running: curl http://127.0.0.1:8001/healthz")
-        log("  2. Start service: uvicorn src.main:app --host 0.0.0.0 --port 8001")
+        log("  1. Check if service is running: curl ${BASE_URL:-http://127.0.0.1:8001}/healthz")
+        log("  2. Start service: uvicorn src.main:app --host 0.0.0.0 --port ${DATA_ANALYSIS_API_PORT:-8001}")
 
         return 3
 
