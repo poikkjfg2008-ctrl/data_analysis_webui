@@ -129,6 +129,7 @@ API 文档：`http://127.0.0.1:8001/docs`
 
 - `GET /healthz`：健康检查
 - `GET /config/runtime`：运行时配置与可调项清单
+- `POST /preprocess/table`：通用表格预处理（定位列/数值候选列划分）
 - `POST /analyze/match`：指标歧义匹配
 - `POST /analyze`：执行分析并生成报告
 
@@ -147,6 +148,18 @@ curl http://127.0.0.1:8001/config/runtime
 ### 3) 指标歧义匹配
 
 ```bash
+curl -X POST "http://127.0.0.1:8001/preprocess/table" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/path/to/data.xlsx",
+    "sheet_name": "Sheet1",
+    "threshold": 10
+  }'
+```
+
+### 4) 指标歧义匹配
+
+```bash
 curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "excel_path=/path/to/data.xlsx" \
@@ -155,7 +168,7 @@ curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -d "use_llm_structure=true"
 ```
 
-### 4) 生成报告
+### 5) 生成报告
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze" \

@@ -53,6 +53,31 @@ def post_match(
     return resp.json()
 
 
+def post_preprocess(
+    base_url: str,
+    file_path: str,
+    sheet_name: str | None,
+    threshold: int,
+    timeout: int,
+) -> dict[str, Any]:
+    """Call /preprocess/table endpoint to split location/value columns."""
+    log("🧩 Preprocessing table columns...")
+    payload: dict[str, Any] = {
+        "file_path": file_path,
+        "threshold": threshold,
+    }
+    if sheet_name:
+        payload["sheet_name"] = sheet_name
+
+    resp = requests.post(
+        f"{base_url}/preprocess/table",
+        json=payload,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def post_analyze(
     base_url: str,
     excel_path: str,
@@ -103,8 +128,8 @@ def validate_excel_path(excel_path: str) -> None:
     if not path.exists():
         raise ValueError(f"Excel file not found: {excel_path}")
 
-    if path.suffix.lower() not in {".xlsx", ".xls"}:
-        raise ValueError(f"Excel file must have .xlsx or .xls extension, got: {excel_path}")
+    if path.suffix.lower() not in {".xlsx", ".xls", ".csv"}:
+        raise ValueError(f"Table file must have .xlsx/.xls/.csv extension, got: {excel_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -147,7 +172,13 @@ Output:
     parser.add_argument(
         "--excel-path",
         required=True,
-        help="Absolute path to Excel file (.xlsx or .xls)"
+        help="Absolute path to table file (.xlsx/.xls/.csv)"
+    )
+    parser.add_argument(
+        "--preprocess-threshold",
+        type=int,
+        default=10,
+        help="Unique-value threshold for /preprocess/table (default: 10)",
     )
 
     parser.add_argument(
@@ -243,6 +274,20 @@ def main() -> int:
         # Phase 1: Health check
         output["healthz"] = healthz(args.base_url, args.timeout)
         log("✓ Health check passed")
+        log("")
+
+        output["preprocess"] = post_preprocess(
+            base_url=args.base_url,
+            file_path=args.excel_path,
+            sheet_name=args.sheet_name,
+            threshold=args.preprocess_threshold,
+            timeout=args.timeout,
+        )
+        log(
+            "✓ Preprocess complete: "
+            f"定位列 {len(output['preprocess'].get('location_columns', []))} 个, "
+            f"数值候选列 {len(output['preprocess'].get('value_columns', []))} 个"
+        )
         log("")
 
         # Phase 2: Match indicators (skip if manually specified)

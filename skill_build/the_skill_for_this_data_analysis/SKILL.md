@@ -9,11 +9,11 @@ metadata:
 
 # Data Analysis Report (Project-Aligned Skill)
 
-Use this skill to convert Excel data into a Word analysis report with statistics, charts, and LLM-generated insights.
+Use this skill to convert table data (Excel/CSV) into a Word analysis report with statistics, charts, and LLM-generated insights.
 
 ## When to use
 
-- User asks to analyze `.xlsx/.xls` business data.
+- User asks to analyze `.xlsx/.xls/.csv` business data.
 - User needs trend/comparison/correlation analysis over a period.
 - User wants a downloadable `.docx` report.
 - User mentions ambiguous metrics (e.g., “产量” might map to multiple columns).
@@ -24,17 +24,19 @@ From the repository root:
 
 - API app entry: `src.main:app`
 - Helper script: `skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_api.py`
-- Default API URL: `http://127.0.0.1:8001`
+- Default API URL: `http://127.0.0.1:8001` (port configurable via `--base-url`)
 
 ## Standard workflow
 
 1. **Check service**
    - `GET /healthz`
-2. **Resolve indicators (recommended)**
+2. **Preprocess table (recommended)**
+   - `POST /preprocess/table`
+3. **Resolve indicators (recommended)**
    - `POST /analyze/match`
-3. **Run analysis**
+4. **Run analysis**
    - `POST /analyze`
-4. **Return result clearly**
+5. **Return result clearly**
    - Show report path, selected indicators, resolved time window.
 
 ## Preferred command (helper script)
@@ -61,6 +63,17 @@ python skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_a
 ### 1) Match indicators
 
 ```bash
+curl -X POST "http://127.0.0.1:8001/preprocess/table" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/absolute/path/to/data.xlsx",
+    "threshold": 10
+  }'
+```
+
+### 2) Match indicators
+
+```bash
 curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "excel_path=/absolute/path/to/data.xlsx" \
@@ -68,7 +81,7 @@ curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -d "use_llm_structure=true"
 ```
 
-### 2) Analyze
+### 3) Analyze
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze" \
