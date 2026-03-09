@@ -99,6 +99,12 @@ Success output typically includes:
 - `analyze.indicator_names`
 - `analyze.time_window`
 - `analyze.sheet_name`
+- `analyze.agent_message`（给智能体可直接转述给用户的摘要消息）
+
+Agent integration tip:
+
+- 优先读取 `analyze.agent_message` 作为对用户的反馈主文本。
+- 再补充 `report_path` 作为下载/查看报告的下一步指引。
 
 Always summarize to user as:
 

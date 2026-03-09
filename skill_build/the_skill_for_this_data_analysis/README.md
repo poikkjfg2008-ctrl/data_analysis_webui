@@ -267,7 +267,9 @@ Just paste the content of SKILL.md directly into the conversation when needed.
     "time_window": {"type": "relative", "value": "最近一年"},
     "indicator_names": ["销量"],
     "sheet_name": "Sheet1",
-    "date_column": "日期"
+    "date_column": "日期",
+    "analysis_mode": "time_series",
+    "agent_message": "已完成数据分析（模式：time_series），工作表：Sheet1，指标：销量，时间范围：最近一年。报告文件：/path/to/report.docx。可将该报告路径返回给用户并提示下载查看完整图表与结论。"
   }
 }
 ```

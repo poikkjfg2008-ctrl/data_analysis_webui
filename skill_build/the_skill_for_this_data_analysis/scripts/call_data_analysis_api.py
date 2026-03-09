@@ -200,6 +200,7 @@ def format_summary(result: dict[str, Any]) -> str:
     analyze = result.get("analyze", {})
     time_window = analyze.get("time_window", {})
     indicators = analyze.get("indicator_names", [])
+    agent_message = analyze.get("agent_message")
 
     parts = [
         f"✓ Analysis complete!",
@@ -213,6 +214,9 @@ def format_summary(result: dict[str, Any]) -> str:
     # Add time window details if available
     if "start_date" in time_window and "end_date" in time_window:
         parts.append(f"   ({time_window['start_date']} to {time_window['end_date']})")
+
+    if agent_message:
+        parts.extend(["", f"🤖 Agent message: {agent_message}"])
 
     return "\n".join(parts)
 

@@ -67,6 +67,27 @@ class AnalyzeResponse(BaseModel):
     sheet_name: str
     date_column: str
     analysis_mode: str
+    agent_message: str
+
+
+def _build_agent_message(
+    report_path: str,
+    indicator_names: List[str],
+    time_window: Dict[str, str],
+    sheet_name: str,
+    analysis_mode: str,
+) -> str:
+    """组装给智能体直接回传给用户的分析摘要。"""
+    indicators_text = "、".join(indicator_names) if indicator_names else "未识别指标"
+    window_text = time_window.get("value") or "未指定时间窗口"
+    return (
+        f"已完成数据分析（模式：{analysis_mode}），"
+        f"工作表：{sheet_name}，"
+        f"指标：{indicators_text}，"
+        f"时间范围：{window_text}。"
+        f"报告文件：{report_path}。"
+        "可将该报告路径返回给用户并提示下载查看完整图表与结论。"
+    )
 
 
 class MatchCandidatesItem(BaseModel):
@@ -355,6 +376,13 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
     )
 
     display_names = [parsed_excel.column_display_names.get(c, c) for c in resolved_metrics]
+    agent_message = _build_agent_message(
+        report_path=report_path,
+        indicator_names=display_names,
+        time_window=time_window,
+        sheet_name=parsed_excel.sheet_name,
+        analysis_mode=analysis_mode,
+    )
     return AnalyzeResponse(
         report_path=report_path,
         time_window=time_window,
@@ -362,4 +390,5 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         sheet_name=parsed_excel.sheet_name,
         date_column=date_col,
         analysis_mode=analysis_mode,
+        agent_message=agent_message,
     )
