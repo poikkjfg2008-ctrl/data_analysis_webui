@@ -12,6 +12,7 @@ from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metr
 from src.llm_client import match_indicators_similarity, parse_prompt
 from src.report_docx import build_report
 from src.settings import get_config_path, get_output_dir
+from src.table_preprocess import preprocess_table_columns, read_table
 
 
 def _indicator_phrases_from_prompt(user_prompt: str) -> List[str]:
@@ -68,6 +69,9 @@ class AnalyzeResponse(BaseModel):
     date_column: str
     analysis_mode: str
     agent_message: str
+    location_columns: List[str]
+    value_candidate_columns: List[str]
+    null_like_columns: List[str]
 
 
 def _build_agent_message(
@@ -88,6 +92,13 @@ def _build_agent_message(
         f"报告文件：{report_path}。"
         "可将该报告路径返回给用户并提示下载查看完整图表与结论。"
     )
+
+
+class PreprocessResponse(BaseModel):
+    low_cardinality_columns: List[str]
+    high_cardinality_columns: List[str]
+    null_like_columns: List[str]
+    threshold: int
 
 
 class MatchCandidatesItem(BaseModel):
@@ -173,6 +184,11 @@ async def config_runtime() -> RuntimeConfigResponse:
                 description="声明当前数据是否包含时间列，false 时按样本序号进行无时间列分析",
                 source="API 请求参数 /analyze",
             ),
+            ContextOptionItem(
+                key="table_preprocess.threshold",
+                description="通用表格预处理阈值，按列唯一值数量拆分定位列和数值候选列",
+                source="API 请求参数 /table/preprocess",
+            ),
         ],
         config_options=[
             ConfigOptionItem(
@@ -208,6 +224,28 @@ async def config_runtime() -> RuntimeConfigResponse:
         ],
     )
 
+
+
+@app.post("/table/preprocess", response_model=PreprocessResponse)
+async def table_preprocess(
+    file_path: str = Form(...),
+    threshold: int = Form(default=10),
+) -> PreprocessResponse:
+    """通用表格预处理：按唯一值阈值划分定位列与数值候选列。"""
+    if threshold < 1:
+        raise HTTPException(status_code=400, detail="threshold 必须大于等于 1")
+    try:
+        df = read_table(file_path)
+        result = preprocess_table_columns(df, threshold=threshold)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"表格预处理失败: {exc}")
+
+    return PreprocessResponse(
+        low_cardinality_columns=result.low_cardinality_columns,
+        high_cardinality_columns=result.high_cardinality_columns,
+        null_like_columns=result.null_like_columns,
+        threshold=threshold,
+    )
 
 @app.post("/analyze/match", response_model=MatchResponse)
 async def analyze_match(
@@ -391,4 +429,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         date_column=date_col,
         analysis_mode=analysis_mode,
         agent_message=agent_message,
+        location_columns=parsed_excel.low_cardinality_columns,
+        value_candidate_columns=parsed_excel.high_cardinality_columns,
+        null_like_columns=parsed_excel.null_like_columns,
     )

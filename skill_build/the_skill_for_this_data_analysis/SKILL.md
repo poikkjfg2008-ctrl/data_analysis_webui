@@ -3,7 +3,7 @@ name: data-analysis-report
 description: Generate Excel-based data analysis reports (docx + charts) through this project’s FastAPI endpoints or helper script. Use for requests like “analyze Excel data”, “compare metrics over time”, “生成数据分析报告”, or “分析趋势并给建议”. Supports ambiguity resolution for similar indicators and Chinese/English time-window expressions.
 metadata:
   author: data-analysis-webui
-  version: "2.1.0"
+  version: "2.2.0"
   license: MIT
 ---
 
@@ -30,11 +30,13 @@ From the repository root:
 
 1. **Check service**
    - `GET /healthz`
-2. **Resolve indicators (recommended)**
+2. **Preprocess table (recommended)**
+   - `POST /table/preprocess`
+3. **Resolve indicators (recommended)**
    - `POST /analyze/match`
-3. **Run analysis**
+4. **Run analysis**
    - `POST /analyze`
-4. **Return result clearly**
+5. **Return result clearly**
    - Show report path, selected indicators, resolved time window.
 
 ## Preferred command (helper script)
@@ -53,12 +55,22 @@ python skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_a
 - `--sheet-name` (optional)
 - `--select-indicators` (optional; skips disambiguation)
 - `--use-llm-structure` / `--no-use-llm-structure`
+- `--preprocess-threshold` (optional; default 10)
 - `--timeout` (optional; increase for large files)
 - `--quiet` (automation-friendly)
 
 ## Direct API usage
 
-### 1) Match indicators
+### 1) Table preprocess
+
+```bash
+curl -X POST "http://127.0.0.1:8001/table/preprocess" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "file_path=/absolute/path/to/data.xlsx" \
+  -d "threshold=10"
+```
+
+### 2) Match indicators
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze/match" \
@@ -68,7 +80,7 @@ curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -d "use_llm_structure=true"
 ```
 
-### 2) Analyze
+### 3) Analyze
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze" \
@@ -100,6 +112,7 @@ Success output typically includes:
 - `analyze.time_window`
 - `analyze.sheet_name`
 - `analyze.agent_message`（给智能体可直接转述给用户的摘要消息）
+- `analyze.location_columns` / `analyze.value_candidate_columns`（预处理列分组）
 
 Agent integration tip:
 

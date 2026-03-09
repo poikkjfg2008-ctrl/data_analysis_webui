@@ -6,6 +6,8 @@ import warnings
 
 import pandas as pd
 
+from src.table_preprocess import preprocess_table_columns
+
 
 @dataclass
 class ParsedExcel:
@@ -17,6 +19,9 @@ class ParsedExcel:
     units: Dict[str, str]
     column_display_names: Dict[str, str] = field(default_factory=dict)
     location_columns: List[str] = field(default_factory=list)
+    low_cardinality_columns: List[str] = field(default_factory=list)
+    high_cardinality_columns: List[str] = field(default_factory=list)
+    null_like_columns: List[str] = field(default_factory=list)
 
 
 def _select_best_sheet(xls: pd.ExcelFile, preferred: Optional[str]) -> str:
@@ -269,18 +274,35 @@ def load_excel(
 
     df = df.assign(**{date_col: date_series})
 
+    preprocessed = preprocess_table_columns(df, threshold=10)
+    preprocessed_low = set(preprocessed.low_cardinality_columns)
+    preprocessed_high = set(preprocessed.high_cardinality_columns)
+
     numeric_cols: List[str] = []
     location_cols: List[str] = []
     for col in df.columns:
         if col == date_col:
             continue
-        if _is_semiconductor_location_column(str(col), df[col]):
+        col_name = str(col)
+        if _is_semiconductor_location_column(col_name, df[col]) or col_name in preprocessed_low:
             location_cols.append(str(col))
             continue
         series = pd.to_numeric(df[col], errors="coerce")
-        if series.notna().mean() > 0.5:
-            numeric_cols.append(str(col))
+        if series.notna().mean() > 0.5 and (col_name in preprocessed_high or len(preprocessed_high) == 0):
+            numeric_cols.append(col_name)
             df[col] = series
+
+    if not numeric_cols:
+        for col in df.columns:
+            if col == date_col:
+                continue
+            col_name = str(col)
+            if col_name in location_cols:
+                continue
+            series = pd.to_numeric(df[col], errors="coerce")
+            if series.notna().mean() > 0.5:
+                numeric_cols.append(col_name)
+                df[col] = series
 
     units: Dict[str, str] = {}
     for col in numeric_cols:
@@ -353,4 +375,7 @@ def load_excel(
         units=units,
         column_display_names=column_display_names,
         location_columns=location_cols,
+        low_cardinality_columns=preprocessed.low_cardinality_columns,
+        high_cardinality_columns=preprocessed.high_cardinality_columns,
+        null_like_columns=preprocessed.null_like_columns,
     )

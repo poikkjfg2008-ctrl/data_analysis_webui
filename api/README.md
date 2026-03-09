@@ -26,8 +26,9 @@ OpenAPI 页面：`http://127.0.0.1:8001/docs`
 
 - `GET /healthz`：健康检查
 - `GET /config/runtime`：返回运行时配置路径、输出目录和可调参数清单
+- `POST /table/preprocess`：通用表格预处理（按唯一值阈值区分定位列/数值候选列）
 - `POST /analyze/match`：指标歧义匹配，返回候选列表
-- `POST /analyze`：分析并生成报告 docx
+- `POST /analyze`：分析并生成报告 docx（返回预处理列分组信息）
 
 ## 4. 调用示例
 
@@ -37,7 +38,17 @@ OpenAPI 页面：`http://127.0.0.1:8001/docs`
 curl http://127.0.0.1:8001/healthz
 ```
 
-### 4.2 歧义匹配
+
+### 4.2 通用表格预处理
+
+```bash
+curl -X POST "http://127.0.0.1:8001/table/preprocess" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "file_path=/path/to/data.xlsx" \
+  -d "threshold=10"
+```
+
+### 4.3 歧义匹配
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze/match" \
@@ -48,7 +59,7 @@ curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -d "use_llm_structure=true"
 ```
 
-### 4.3 生成报告
+### 4.4 生成报告
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze" \

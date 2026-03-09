@@ -53,6 +53,24 @@ def post_match(
     return resp.json()
 
 
+def post_preprocess(
+    base_url: str,
+    excel_path: str,
+    threshold: int,
+    timeout: int,
+) -> dict[str, Any]:
+    """Call /table/preprocess endpoint for generic table preprocessing"""
+    log("🧹 Preprocessing table columns...")
+
+    resp = requests.post(
+        f"{base_url}/table/preprocess",
+        data={"file_path": excel_path, "threshold": threshold},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def post_analyze(
     base_url: str,
     excel_path: str,
@@ -94,7 +112,7 @@ def healthz(base_url: str, timeout: int) -> dict[str, Any]:
 
 
 def validate_excel_path(excel_path: str) -> None:
-    """Validate that Excel file exists and has correct extension"""
+    """Validate that table file exists and has correct extension"""
     path = Path(excel_path)
 
     if not path.is_absolute():
@@ -103,8 +121,8 @@ def validate_excel_path(excel_path: str) -> None:
     if not path.exists():
         raise ValueError(f"Excel file not found: {excel_path}")
 
-    if path.suffix.lower() not in {".xlsx", ".xls"}:
-        raise ValueError(f"Excel file must have .xlsx or .xls extension, got: {excel_path}")
+    if path.suffix.lower() not in {".xlsx", ".xls", ".csv"}:
+        raise ValueError(f"Table file must have .xlsx/.xls/.csv extension, got: {excel_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -147,7 +165,7 @@ Output:
     parser.add_argument(
         "--excel-path",
         required=True,
-        help="Absolute path to Excel file (.xlsx or .xls)"
+        help="Absolute path to table file (.xlsx/.xls/.csv)"
     )
 
     parser.add_argument(
@@ -176,6 +194,14 @@ Output:
         default=None,
         metavar="INDICATOR",
         help="Manually specify indicator names (skips auto-disambiguation)"
+    )
+
+    parser.add_argument(
+        "--preprocess-threshold",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Unique-value threshold for /table/preprocess (default: 10)"
     )
 
     parser.add_argument(
@@ -245,7 +271,17 @@ def main() -> int:
         log("✓ Health check passed")
         log("")
 
-        # Phase 2: Match indicators (skip if manually specified)
+        # Phase 2: Table preprocess
+        output["preprocess"] = post_preprocess(
+            base_url=args.base_url,
+            excel_path=args.excel_path,
+            threshold=args.preprocess_threshold,
+            timeout=args.timeout,
+        )
+        log("✓ Table preprocess complete")
+        log("")
+
+        # Phase 3: Match indicators (skip if manually specified)
         selected_indicator_names = args.select_indicators
 
         if not selected_indicator_names:
