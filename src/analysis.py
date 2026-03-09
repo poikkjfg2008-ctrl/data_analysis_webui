@@ -187,3 +187,36 @@ def plot_series(
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close()
+
+
+def summarize_no_time_dataset(df: pd.DataFrame, metrics: List[str]) -> str:
+    """无时间列场景下的数据概览：按样本分布/缺失率/相关性给出简要总结。"""
+    if not metrics:
+        return "未选择可分析的数值指标。"
+    n_rows = len(df)
+    lines = [f"无时间列模式：基于 {n_rows} 条样本进行横截面统计分析。"]
+
+    missing_parts = []
+    for m in metrics[:8]:
+        miss = float(df[m].isna().mean()) if m in df.columns and n_rows else 0.0
+        missing_parts.append(f"{m} 缺失率 {miss:.1%}")
+    if missing_parts:
+        lines.append("；".join(missing_parts) + "。")
+
+    numeric_df = df[metrics].apply(pd.to_numeric, errors="coerce")
+    corr = numeric_df.corr(numeric_only=True)
+    best_pair = None
+    best_val = 0.0
+    if corr is not None and not corr.empty:
+        cols = list(corr.columns)
+        for i in range(len(cols)):
+            for j in range(i + 1, len(cols)):
+                val = corr.iloc[i, j]
+                if pd.notna(val) and abs(float(val)) > abs(best_val):
+                    best_val = float(val)
+                    best_pair = (cols[i], cols[j])
+    if best_pair:
+        direction = "正相关" if best_val >= 0 else "负相关"
+        lines.append(f"相关性最显著的指标对为 {best_pair[0]} 与 {best_pair[1]}（{direction}，系数 {best_val:.3f}）。")
+
+    return "\n".join(lines)

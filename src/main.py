@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Form, HTTPException
 from pydantic import BaseModel, Field
 
-from src.analysis import resolve_window
+from src.analysis import resolve_window, summarize_no_time_dataset
 from src.excel_parser import load_excel
 from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metrics
 from src.llm_client import match_indicators_similarity, parse_prompt
@@ -57,6 +57,7 @@ class AnalyzeRequest(BaseModel):
     output_dir: str = Field(default_factory=get_output_dir)
     selected_indicator_names: Optional[List[str]] = None
     use_llm_structure: bool = Field(default=True, description="用 LLM 推断 Excel 日期/数值列结构，适配任意表格式；设为 false 则使用启发式规则")
+    has_time_column: bool = Field(default=True, description="数据是否包含可用时间列；false 时将启用无时间列分析流程")
 
 
 class AnalyzeResponse(BaseModel):
@@ -65,6 +66,7 @@ class AnalyzeResponse(BaseModel):
     indicator_names: List[str]
     sheet_name: str
     date_column: str
+    analysis_mode: str
 
 
 class MatchCandidatesItem(BaseModel):
@@ -145,6 +147,11 @@ async def config_runtime() -> RuntimeConfigResponse:
                 description="从用户需求中解析时间窗口（相对时间或绝对日期区间）",
                 source="用户提示词解析",
             ),
+            ContextOptionItem(
+                key="has_time_column",
+                description="声明当前数据是否包含时间列，false 时按样本序号进行无时间列分析",
+                source="API 请求参数 /analyze",
+            ),
         ],
         config_options=[
             ConfigOptionItem(
@@ -197,6 +204,7 @@ async def analyze_match(
             sheet_name,
             config_path=CONFIG_PATH if use_llm_structure else None,
             use_llm_structure=use_llm_structure,
+            has_time_column=True,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"读取 Excel 失败: {exc}")
@@ -231,6 +239,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
             request.sheet_name,
             config_path=CONFIG_PATH if request.use_llm_structure else None,
             use_llm_structure=request.use_llm_structure,
+            has_time_column=request.has_time_column,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"读取 Excel 失败: {exc}")
@@ -243,6 +252,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
     date_min = df[date_col].min()
     date_max = df[date_col].max()
     date_range = (date_min.date().isoformat(), date_max.date().isoformat())
+    analysis_mode = "time_series" if request.has_time_column else "no_time"
 
     if request.selected_indicator_names:
         # 用户已在 /analyze/match 歧义时选择，直接使用所选显示名解析为列名
@@ -320,22 +330,28 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
 
     resolved_metrics = list(dict.fromkeys(resolved_metrics))
 
-    time_window = parsed_prompt.get("time_window") or {"type": "relative", "value": "最近一年"}
-    start, end, window_label = resolve_window(time_window, date_max)
-    filtered = df[(df[date_col] >= start) & (df[date_col] <= end)].copy()
+    if request.has_time_column:
+        time_window = parsed_prompt.get("time_window") or {"type": "relative", "value": "最近一年"}
+        start, end, window_label = resolve_window(time_window, date_max)
+        filtered = df[(df[date_col] >= start) & (df[date_col] <= end)].copy()
+        if filtered.empty:
+            raise HTTPException(status_code=400, detail="时间窗口内无数据")
+    else:
+        time_window = {"type": "sample_index", "value": "全部样本"}
+        window_label = "全部样本（无时间列）"
+        filtered = df.copy()
 
-    if filtered.empty:
-        raise HTTPException(status_code=400, detail="时间窗口内无数据")
-
+    no_time_preface = summarize_no_time_dataset(filtered, resolved_metrics) if not request.has_time_column else None
     report_path, _ = build_report(
         output_dir=request.output_dir,
-        title="数据分析报告",
+        title="数据分析报告" + ("（无时间列模式）" if not request.has_time_column else ""),
         date_range=window_label,
         metrics=resolved_metrics,
         df=filtered,
         date_col=date_col,
         config_path=CONFIG_PATH,
         units=parsed_excel.units,
+        preface=no_time_preface,
     )
 
     display_names = [parsed_excel.column_display_names.get(c, c) for c in resolved_metrics]
@@ -345,4 +361,5 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         indicator_names=display_names,
         sheet_name=parsed_excel.sheet_name,
         date_column=date_col,
+        analysis_mode=analysis_mode,
     )

@@ -237,18 +237,33 @@ def load_excel(
     preferred_sheet: Optional[str] = None,
     config_path: Optional[str] = None,
     use_llm_structure: bool = False,
+    has_time_column: bool = True,
 ) -> ParsedExcel:
     xls = pd.ExcelFile(path)
     sheet_name = _select_best_sheet(xls, preferred_sheet)
     df = xls.parse(sheet_name)
 
-    date_col, ratios = _detect_date_column(df)
-    date_series = _coerce_datetime(df[date_col])
+    if has_time_column:
+        date_col, ratios = _detect_date_column(df)
+        date_series = _coerce_datetime(df[date_col])
 
-    # 某些测试数据没有真实时间列（仅有批次/定位/性能参数），降级为样本序号轴。
-    if date_series.notna().mean() < 0.2:
+        # 某些测试数据没有真实时间列（仅有批次/定位/性能参数），降级为样本序号轴。
+        if date_series.notna().mean() < 0.2:
+            fallback_col = "__sample_index__"
+            df[fallback_col] = pd.to_datetime(
+                pd.RangeIndex(start=0, stop=len(df), step=1),
+                unit="D",
+                origin="2000-01-01",
+            )
+            date_col = fallback_col
+            date_series = df[date_col]
+    else:
         fallback_col = "__sample_index__"
-        df[fallback_col] = pd.to_datetime(pd.RangeIndex(start=0, stop=len(df), step=1), unit="D", origin="2000-01-01")
+        df[fallback_col] = pd.to_datetime(
+            pd.RangeIndex(start=0, stop=len(df), step=1),
+            unit="D",
+            origin="2000-01-01",
+        )
         date_col = fallback_col
         date_series = df[date_col]
 
