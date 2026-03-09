@@ -6,6 +6,8 @@ import warnings
 
 import pandas as pd
 
+from src.table_preprocess import parse_table_columns_from_df
+
 
 @dataclass
 class ParsedExcel:
@@ -17,6 +19,7 @@ class ParsedExcel:
     units: Dict[str, str]
     column_display_names: Dict[str, str] = field(default_factory=dict)
     location_columns: List[str] = field(default_factory=list)
+    value_columns: List[str] = field(default_factory=list)
 
 
 def _select_best_sheet(xls: pd.ExcelFile, preferred: Optional[str]) -> str:
@@ -269,10 +272,16 @@ def load_excel(
 
     df = df.assign(**{date_col: date_series})
 
+    low_cardinality_cols, high_cardinality_cols = parse_table_columns_from_df(df, threshold=10)
+
     numeric_cols: List[str] = []
     location_cols: List[str] = []
     for col in df.columns:
         if col == date_col:
+            continue
+        # 通用预处理节点识别出的定位列，优先不作为连续指标。
+        if str(col) in low_cardinality_cols:
+            location_cols.append(str(col))
             continue
         if _is_semiconductor_location_column(str(col), df[col]):
             location_cols.append(str(col))
@@ -353,4 +362,5 @@ def load_excel(
         units=units,
         column_display_names=column_display_names,
         location_columns=location_cols,
+        value_columns=[c for c in high_cardinality_cols if c != str(date_col)],
     )

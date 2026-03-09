@@ -24,24 +24,27 @@ From the repository root:
 
 - API app entry: `src.main:app`
 - Helper script: `skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_api.py`
-- Default API URL: `http://127.0.0.1:8001`
+- Default API URL: `http://127.0.0.1:8010`（可由 `DATA_ANALYSIS_API_BASE_URL` 覆盖）
 
 ## Standard workflow
 
 1. **Check service**
    - `GET /healthz`
-2. **Resolve indicators (recommended)**
+2. **Run table preprocessing node (recommended for generic spreadsheets)**
+   - `POST /preprocess/table_columns`
+   - 获取 `location_columns`（定位列）和 `value_columns`（数值列候选）
+3. **Resolve indicators (recommended)**
    - `POST /analyze/match`
-3. **Run analysis**
+4. **Run analysis**
    - `POST /analyze`
-4. **Return result clearly**
+5. **Return result clearly**
    - Show report path, selected indicators, resolved time window.
 
 ## Preferred command (helper script)
 
 ```bash
 python skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_api.py \
-  --base-url http://127.0.0.1:8001 \
+  --base-url http://127.0.0.1:8010 \
   --excel-path /absolute/path/to/data.xlsx \
   --user-prompt "分析最近一年产量和销量趋势，并给出建议"
 ```
@@ -61,17 +64,29 @@ python skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_a
 ### 1) Match indicators
 
 ```bash
-curl -X POST "http://127.0.0.1:8001/analyze/match" \
+curl -X POST "http://127.0.0.1:8010/preprocess/table_columns" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/absolute/path/to/data.xlsx",
+    "threshold": 10,
+    "sheet_name": "Sheet1"
+  }'
+```
+
+### 2) Match indicators
+
+```bash
+curl -X POST "http://127.0.0.1:8010/analyze/match" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "excel_path=/absolute/path/to/data.xlsx" \
   -d "user_prompt=分析最近一年产量趋势" \
   -d "use_llm_structure=true"
 ```
 
-### 2) Analyze
+### 3) Analyze
 
 ```bash
-curl -X POST "http://127.0.0.1:8001/analyze" \
+curl -X POST "http://127.0.0.1:8010/analyze" \
   -H "Content-Type: application/json" \
   -d '{
     "excel_path": "/absolute/path/to/data.xlsx",
@@ -124,7 +139,7 @@ Always summarize to user as:
 
 ```bash
 # start
-uvicorn src.main:app --host 0.0.0.0 --port 8001
+uvicorn src.main:app --host 0.0.0.0 --port 8010
 
 # optional web UI mode
 python src/gradio_app.py
