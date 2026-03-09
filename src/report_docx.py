@@ -118,11 +118,14 @@ def _add_metrics_section(
     config_path: str,
     units: Dict[str, str],
     chart_start_index: int,
+    preface: Optional[str] = None,
 ) -> List[Tuple[List[str], List[float], str, Optional[str]]]:
     """向 document 追加「日期范围 + 各指标表格/占位符/结论」，返回本节的 chart_data。"""
     chart_data: List[Tuple[List[str], List[float], str, Optional[str]]] = []
     document.add_paragraph(f"日期范围: {date_range}")
     document.add_paragraph(f"指标数量: {len(metrics)}")
+    if preface:
+        document.add_paragraph(preface)
 
     for i, metric in enumerate(metrics):
         document.add_heading(metric, level=2)
@@ -168,6 +171,7 @@ def build_report(
     config_path: str,
     units: Dict[str, str],
     output_path: Optional[str] = None,
+    preface: Optional[str] = None,
 ) -> Tuple[str, List[Tuple[List[str], List[float], str, Optional[str]]]]:
     """生成新报告，返回 (docx 路径, chart_data)。若提供 output_path 则直接写入该路径（用于多轮共用同一文件）。"""
     os.makedirs(output_dir, exist_ok=True)
@@ -179,7 +183,7 @@ def build_report(
     document = Document()
     document.add_heading(title, level=1)
     chart_data = _add_metrics_section(
-        document, date_range, metrics, df, date_col, config_path, units, chart_start_index=0
+        document, date_range, metrics, df, date_col, config_path, units, chart_start_index=0, preface=preface
     )
 
     _apply_document_fonts(document)
@@ -202,12 +206,13 @@ def append_report_section(
     config_path: str,
     units: Dict[str, str],
     chart_start_index: int,
+    preface: Optional[str] = None,
 ) -> List[Tuple[List[str], List[float], str, Optional[str]]]:
     """向已有 docx 追加一节（多轮对话的一轮），占位符从 chart_start_index 起。返回本节 chart_data。"""
     document = Document(doc_path)
     document.add_heading(section_title, level=1)
     chart_data = _add_metrics_section(
-        document, date_range, metrics, df, date_col, config_path, units, chart_start_index
+        document, date_range, metrics, df, date_col, config_path, units, chart_start_index, preface=preface
     )
     _apply_document_fonts(document)
     document.save(doc_path)

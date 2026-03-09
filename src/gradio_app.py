@@ -20,7 +20,7 @@ import gradio as gr
 import mammoth
 import requests
 
-from src.analysis import resolve_window
+from src.analysis import resolve_window, summarize_no_time_dataset
 from src.excel_parser import load_excel
 from src.file_ingest import build_raw_file_context_section, parse_uploads
 from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metrics
@@ -93,7 +93,7 @@ def _update_state_with_uploads(state: SessionState, uploads) -> SessionState:
     return state
 
 
-def _load_parsed_excel(state: SessionState, sheet_name: Optional[str], use_llm: bool):
+def _load_parsed_excel(state: SessionState, sheet_name: Optional[str], use_llm: bool, has_time_column: bool):
     if not state.excel_path:
         raise ValueError("请先上传 Excel 文件")
     if state.parsed_excel is None or sheet_name:
@@ -102,6 +102,7 @@ def _load_parsed_excel(state: SessionState, sheet_name: Optional[str], use_llm: 
             sheet_name,
             config_path=CONFIG_PATH if use_llm else None,
             use_llm_structure=use_llm,
+            has_time_column=has_time_column,
         )
     return state.parsed_excel
 
@@ -244,12 +245,13 @@ def _build_report_from_state(
     sheet_name: Optional[str],
     time_window_override: Optional[str],
     use_llm_structure: bool,
+    has_time_column: bool,
     round_index: int,
     is_first_round: bool,
 ) -> Tuple[str, str, List[str], List, bool]:
     """生成或追加报告。使用固定 SESSION_REPORT_PATH，不依赖 state 传路径，避免只导出最后一轮。
     返回 (report_path, window_label, display_names, chart_data, is_append)。"""
-    parsed_excel = _load_parsed_excel(state, sheet_name, use_llm_structure)
+    parsed_excel = _load_parsed_excel(state, sheet_name, use_llm_structure, has_time_column)
     time_window, sheet_override = _resolve_time_window(
         prompt,
         parsed_excel,
@@ -262,6 +264,7 @@ def _build_report_from_state(
             sheet_override,
             config_path=CONFIG_PATH if use_llm_structure else None,
             use_llm_structure=use_llm_structure,
+            has_time_column=has_time_column,
         )
         state.parsed_excel = parsed_excel
 
@@ -273,19 +276,25 @@ def _build_report_from_state(
 
     date_col = parsed_excel.date_column
     df = parsed_excel.df
-    date_max = df[date_col].max()
-    start, end, window_label = resolve_window(time_window, date_max)
-    filtered = df[(df[date_col] >= start) & (df[date_col] <= end)].copy()
-    if filtered.empty:
-        raise ValueError("时间窗口内无数据")
+    if has_time_column:
+        date_max = df[date_col].max()
+        start, end, window_label = resolve_window(time_window, date_max)
+        filtered = df[(df[date_col] >= start) & (df[date_col] <= end)].copy()
+        if filtered.empty:
+            raise ValueError("时间窗口内无数据")
+    else:
+        window_label = "全部样本（无时间列）"
+        filtered = df.copy()
 
     display_names = [parsed_excel.column_display_names.get(c, c) for c in resolved_metrics]
     report_path = SESSION_REPORT_PATH
 
+    no_time_preface = summarize_no_time_dataset(filtered, resolved_metrics) if not has_time_column else None
+
     if is_first_round:
         _, chart_data = build_report(
             output_dir=DEFAULT_OUTPUT_DIR,
-            title="数据分析报告",
+            title="数据分析报告" + ("（无时间列模式）" if not has_time_column else ""),
             date_range=window_label,
             metrics=resolved_metrics,
             df=filtered,
@@ -293,6 +302,7 @@ def _build_report_from_state(
             config_path=CONFIG_PATH,
             units=parsed_excel.units,
             output_path=report_path,
+            preface=no_time_preface,
         )
         return report_path, window_label, display_names, chart_data, False
 
@@ -308,6 +318,7 @@ def _build_report_from_state(
         config_path=CONFIG_PATH,
         units=parsed_excel.units,
         chart_start_index=chart_start,
+        preface=no_time_preface,
     )
     return report_path, window_label, display_names, new_chart_data, True
 
@@ -342,6 +353,7 @@ def handle_message(
     sheet_name: Optional[str],
     time_window_override: Optional[str],
     use_llm_structure: bool,
+    has_time_column: bool,
     use_message_for_summary_revision: bool,
 ) -> Tuple[ChatHistory, SessionState, str, Optional[str], Any]:
     state = _update_state_with_uploads(state, uploads)
@@ -388,7 +400,7 @@ def handle_message(
         return new_hist, state, "", None, _box_from_hist(new_hist)
 
     try:
-        parsed_excel = _load_parsed_excel(state, sheet_name, use_llm_structure)
+        parsed_excel = _load_parsed_excel(state, sheet_name, use_llm_structure, has_time_column)
     except Exception as exc:
         new_hist = _append_turn(hist, message, f"无法读取 Excel: {exc}")
         return new_hist, state, "", None, _box_from_hist(new_hist)
@@ -425,6 +437,7 @@ def handle_message(
             sheet_name,
             time_window_override,
             use_llm_structure,
+            has_time_column,
             round_index,
             is_first_round,
         )
@@ -524,6 +537,7 @@ def build_ui() -> gr.Blocks:
                 sheet_name = gr.Textbox(label="Sheet 名称 (可选)")
                 time_window = gr.Textbox(label="时间窗口 (可选，YYYY-MM-DD 至 YYYY-MM-DD)")
                 use_llm_structure = gr.Checkbox(label="使用 LLM 识别表结构", value=True)
+                has_time_column = gr.Checkbox(label="数据包含时间列", value=True)
                 use_message_for_summary_revision = gr.Checkbox(
                     label="将本条消息用于修改总结",
                     value=False,
@@ -553,6 +567,7 @@ def build_ui() -> gr.Blocks:
                 sheet_name,
                 time_window,
                 use_llm_structure,
+                has_time_column,
                 use_message_for_summary_revision,
             ],
             outputs=[chatbot, state, report_html, report_file, summary_prompt_box],
@@ -567,6 +582,7 @@ def build_ui() -> gr.Blocks:
                 sheet_name,
                 time_window,
                 use_llm_structure,
+                has_time_column,
                 use_message_for_summary_revision,
             ],
             outputs=[chatbot, state, report_html, report_file, summary_prompt_box],
