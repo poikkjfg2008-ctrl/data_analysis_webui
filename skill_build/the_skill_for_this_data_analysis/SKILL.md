@@ -24,17 +24,19 @@ From the repository root:
 
 - API app entry: `src.main:app`
 - Helper script: `skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_api.py`
-- Default API URL: `http://127.0.0.1:8001`
+- Default API URL: `http://127.0.0.1:8001`（可通过 `DATA_ANALYSIS_API_HOST` / `DATA_ANALYSIS_API_PORT` 覆盖）
 
 ## Standard workflow
 
 1. **Check service**
    - `GET /healthz`
-2. **Resolve indicators (recommended)**
+2. **Preprocess table columns (recommended)**
+   - `POST /analyze/preprocess`
+3. **Resolve indicators (recommended)**
    - `POST /analyze/match`
-3. **Run analysis**
+4. **Run analysis**
    - `POST /analyze`
-4. **Return result clearly**
+5. **Return result clearly**
    - Show report path, selected indicators, resolved time window.
 
 ## Preferred command (helper script)
@@ -58,7 +60,18 @@ python skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_a
 
 ## Direct API usage
 
-### 1) Match indicators
+### 1) Preprocess columns
+
+```bash
+curl -X POST "http://127.0.0.1:8001/analyze/preprocess" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/absolute/path/to/data.xlsx",
+    "threshold": 10
+  }'
+```
+
+### 2) Match indicators
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze/match" \
@@ -68,7 +81,7 @@ curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -d "use_llm_structure=true"
 ```
 
-### 2) Analyze
+### 3) Analyze
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze" \

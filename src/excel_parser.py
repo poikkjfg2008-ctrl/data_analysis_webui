@@ -6,6 +6,8 @@ import warnings
 
 import pandas as pd
 
+from src.table_preprocess import parse_table_columns_from_df
+
 
 @dataclass
 class ParsedExcel:
@@ -269,13 +271,20 @@ def load_excel(
 
     df = df.assign(**{date_col: date_series})
 
+    pre_low_cols, pre_high_cols = parse_table_columns_from_df(df, threshold=10)
+    high_col_set = {c for c in pre_high_cols if c != date_col}
+
     numeric_cols: List[str] = []
-    location_cols: List[str] = []
+    location_cols: List[str] = [c for c in pre_low_cols if c != date_col]
     for col in df.columns:
         if col == date_col:
             continue
         if _is_semiconductor_location_column(str(col), df[col]):
-            location_cols.append(str(col))
+            if str(col) not in location_cols:
+                location_cols.append(str(col))
+            continue
+        if high_col_set and str(col) not in high_col_set:
+            # 通用预处理节点：低基数列优先作为定位字段，不进入指标分析。
             continue
         series = pd.to_numeric(df[col], errors="coerce")
         if series.notna().mean() > 0.5:

@@ -97,6 +97,8 @@ API 文档：`http://127.0.0.1:8001/docs`
 - `DATA_ANALYSIS_CONFIG_PATH`：覆盖配置文件路径
 - `DATA_ANALYSIS_OUTPUT_DIR`：覆盖报告输出目录
 - `GRADIO_SERVER_PORT`：覆盖 WebUI 端口（默认 5600）
+- `DATA_ANALYSIS_API_HOST`：辅助脚本默认 API 主机（默认 127.0.0.1）
+- `DATA_ANALYSIS_API_PORT`：辅助脚本默认 API 端口（默认 8001）
 
 ---
 
@@ -129,6 +131,7 @@ API 文档：`http://127.0.0.1:8001/docs`
 
 - `GET /healthz`：健康检查
 - `GET /config/runtime`：运行时配置与可调项清单
+- `POST /analyze/preprocess`：通用表格预处理（定位列/数值列候选）
 - `POST /analyze/match`：指标歧义匹配
 - `POST /analyze`：执行分析并生成报告
 
@@ -144,7 +147,19 @@ curl http://127.0.0.1:8001/healthz
 curl http://127.0.0.1:8001/config/runtime
 ```
 
-### 3) 指标歧义匹配
+### 3) 通用表格预处理
+
+```bash
+curl -X POST "http://127.0.0.1:8001/analyze/preprocess" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/path/to/data.xlsx",
+    "sheet_name": "Sheet1",
+    "threshold": 10
+  }'
+```
+
+### 4) 指标歧义匹配
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze/match" \
@@ -155,7 +170,7 @@ curl -X POST "http://127.0.0.1:8001/analyze/match" \
   -d "use_llm_structure=true"
 ```
 
-### 4) 生成报告
+### 5) 生成报告
 
 ```bash
 curl -X POST "http://127.0.0.1:8001/analyze" \
