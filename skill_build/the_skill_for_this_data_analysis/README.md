@@ -202,6 +202,7 @@ The skill now matches the quality and structure of Vercel's production skills:
 | **SKILL.md** | Main skill documentation | 444 |
 | **metadata.json** | Skill metadata | 33 |
 | **EXAMPLES.md** | Usage examples | 650+ |
+| **DEBUG_CHECKLIST.md** | 调试清单（命令模板/日志字段/判定标准） | - |
 | **README.md** | This file | - |
 | **call_data_analysis_api.py** | Calling script | 381 |
 | **test_examples.sh** | Test suite | 350+ |
