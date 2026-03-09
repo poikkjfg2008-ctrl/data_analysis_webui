@@ -12,6 +12,7 @@ from src.indicator_resolver import resolve_prompt_metrics, resolve_selected_metr
 from src.llm_client import match_indicators_similarity, parse_prompt
 from src.report_docx import build_report
 from src.settings import get_config_path, get_output_dir
+from src.table_preprocess import parse_table_columns_from_df, read_table
 
 
 def _indicator_phrases_from_prompt(user_prompt: str) -> List[str]:
@@ -58,6 +59,7 @@ class AnalyzeRequest(BaseModel):
     selected_indicator_names: Optional[List[str]] = None
     use_llm_structure: bool = Field(default=True, description="用 LLM 推断 Excel 日期/数值列结构，适配任意表格式；设为 false 则使用启发式规则")
     has_time_column: bool = Field(default=True, description="数据是否包含可用时间列；false 时将启用无时间列分析流程")
+    preprocess_threshold: int = Field(default=10, ge=1, description="通用表格预处理阈值：唯一值计数小于等于该值的列视为定位列")
 
 
 class AnalyzeResponse(BaseModel):
@@ -68,6 +70,20 @@ class AnalyzeResponse(BaseModel):
     date_column: str
     analysis_mode: str
     agent_message: str
+    location_columns: List[str]
+    value_columns: List[str]
+
+
+class TablePreprocessRequest(BaseModel):
+    file_path: str
+    sheet_name: Optional[str] = None
+    threshold: int = Field(default=10, ge=1)
+
+
+class TablePreprocessResponse(BaseModel):
+    sheet_name: str
+    location_columns: List[str]
+    value_columns: List[str]
 
 
 def _build_agent_message(
@@ -261,6 +277,7 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
             config_path=CONFIG_PATH if request.use_llm_structure else None,
             use_llm_structure=request.use_llm_structure,
             has_time_column=request.has_time_column,
+            preprocess_threshold=request.preprocess_threshold,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"读取 Excel 失败: {exc}")
@@ -391,4 +408,21 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         date_column=date_col,
         analysis_mode=analysis_mode,
         agent_message=agent_message,
+        location_columns=parsed_excel.location_columns,
+        value_columns=parsed_excel.numeric_columns,
+    )
+
+
+@app.post("/preprocess/table", response_model=TablePreprocessResponse)
+async def preprocess_table(request: TablePreprocessRequest) -> TablePreprocessResponse:
+    try:
+        df, loaded_sheet = read_table(request.file_path, preferred_sheet=request.sheet_name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"读取表格失败: {exc}")
+
+    result = parse_table_columns_from_df(df, threshold=request.threshold)
+    return TablePreprocessResponse(
+        sheet_name=request.sheet_name or loaded_sheet,
+        location_columns=result.location_columns,
+        value_columns=result.value_columns,
     )

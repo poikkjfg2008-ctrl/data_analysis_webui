@@ -6,6 +6,8 @@ import warnings
 
 import pandas as pd
 
+from src.table_preprocess import parse_table_columns_from_df
+
 
 @dataclass
 class ParsedExcel:
@@ -238,6 +240,7 @@ def load_excel(
     config_path: Optional[str] = None,
     use_llm_structure: bool = False,
     has_time_column: bool = True,
+    preprocess_threshold: int = 10,
 ) -> ParsedExcel:
     xls = pd.ExcelFile(path)
     sheet_name = _select_best_sheet(xls, preferred_sheet)
@@ -269,13 +272,22 @@ def load_excel(
 
     df = df.assign(**{date_col: date_series})
 
+    preprocessed = parse_table_columns_from_df(
+        df,
+        threshold=preprocess_threshold,
+        excluded_columns=[date_col],
+    )
+
     numeric_cols: List[str] = []
-    location_cols: List[str] = []
+    location_cols: List[str] = list(preprocessed.location_columns)
     for col in df.columns:
         if col == date_col:
             continue
         if _is_semiconductor_location_column(str(col), df[col]):
-            location_cols.append(str(col))
+            if str(col) not in location_cols:
+                location_cols.append(str(col))
+            continue
+        if str(col) not in preprocessed.value_columns:
             continue
         series = pd.to_numeric(df[col], errors="coerce")
         if series.notna().mean() > 0.5:
