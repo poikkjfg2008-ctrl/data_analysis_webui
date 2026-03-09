@@ -132,7 +132,9 @@ python skill_build/the_skill_for_this_data_analysis/scripts/call_data_analysis_a
 if [ $? -eq 0 ]; then
   echo "Analysis completed successfully"
   report_path=$(jq -r '.analyze.report_path' output.json)
+  agent_message=$(jq -r '.analyze.agent_message' output.json)
   echo "Report saved to: $report_path"
+  echo "Agent summary: $agent_message"
 else
   echo "Analysis failed"
   cat errors.log

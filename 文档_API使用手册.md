@@ -266,7 +266,9 @@ result = response.json()
   },
   "indicator_names": ["产量", "销量"],
   "sheet_name": "Sheet1",
-  "date_column": "日期"
+  "date_column": "日期",
+  "analysis_mode": "time_series",
+  "agent_message": "已完成数据分析（模式：time_series），工作表：Sheet1，指标：产量、销量，时间范围：最近一年。报告文件：/path/to/data/reports/report_20250301_143025.docx。可将该报告路径返回给用户并提示下载查看完整图表与结论。"
 }
 ```
 
