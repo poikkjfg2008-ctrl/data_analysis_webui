@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import requests
+
+DEFAULT_BASE_URL = os.environ.get("DATA_ANALYSIS_API_BASE_URL", "http://127.0.0.1:8010")
 
 
 def log(message: str) -> None:
@@ -140,8 +143,8 @@ Output:
 
     parser.add_argument(
         "--base-url",
-        default="http://127.0.0.1:8001",
-        help="API base URL (default: http://127.0.0.1:8001)"
+        default=DEFAULT_BASE_URL,
+        help=f"API base URL (default: {DEFAULT_BASE_URL})"
     )
 
     parser.add_argument(
@@ -348,8 +351,8 @@ def main() -> int:
         log("  - Invalid base URL")
         log("")
         log("Try:")
-        log("  1. Check if service is running: curl http://127.0.0.1:8001/healthz")
-        log("  2. Start service: uvicorn src.main:app --host 0.0.0.0 --port 8001")
+        log("  1. Check if service is running: curl http://127.0.0.1:8010/healthz")
+        log("  2. Start service: uvicorn src.main:app --host 0.0.0.0 --port 8010")
 
         return 3
 
